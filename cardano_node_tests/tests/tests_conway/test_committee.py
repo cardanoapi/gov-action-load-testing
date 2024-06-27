@@ -77,7 +77,6 @@ def pool_user(
         caching_key=key,
     )
 
-
 @pytest.fixture
 def pool_user_lg(
     cluster_manager: cluster_management.ClusterManager,

@@ -50,7 +50,7 @@ def get_pool_id(
 
 def cluster_and_pool(
     cluster_manager: cluster_management.ClusterManager,
-) -> tp.Tuple[clusterlib.ClusterLib, str]:
+) -> tp.Tuple[clusterlib.ClusterLib, tp.List[str]]:
     """Return instance of `clusterlib.ClusterLib`, and pool id to delegate to.
 
     We need to mark the pool as "in use" when requesting local cluster
@@ -85,16 +85,19 @@ def cluster_and_pool(
                 resources_management.OneOf(resources=cluster_management.Resources.ALL_POOLS),
             ]
         )
-        pool_name = cluster_manager.get_used_resources(
+        pool_names = cluster_manager.get_used_resources(
             from_set=cluster_management.Resources.ALL_POOLS
-        )[0]
-        pool_id = get_pool_id(
+        )
+        all_pools = list(cluster_management.Resources.ALL_POOLS)
+        pool_ids = [
+            get_pool_id(
             cluster_obj=cluster_obj,
             addrs_data=cluster_manager.cache.addrs_data,
-            pool_name=pool_name,
-        )
-    return cluster_obj, pool_id
-
+            pool_name=all_pools[i],
+            )
+            for i in (range(len(all_pools)))
+        ]      
+    return cluster_obj, pool_ids
 
 def db_check_delegation(
     pool_user: tp.Union[clusterlib.PoolUser, PoolUserScript],

@@ -118,60 +118,66 @@ def get_registered_pool_user(
     cluster_obj: clusterlib.ClusterLib,
     caching_key: str = "",
     fund_amount: int = 1000_000_000,
-) -> clusterlib.PoolUser:
+    no_of_users: int = 1
+) -> tp.List[clusterlib.PoolUser]:
     """Create a registered pool user."""
 
     def _create_user() -> clusterlib.PoolUser:
-        pool_user = clusterlib_utils.create_pool_users(
+        pool_users = clusterlib_utils.create_pool_users(
             cluster_obj=cluster_obj,
             name_template=f"{name_template}_pool_user",
-            no_of_addr=1,
-        )[0]
-        return pool_user
+            no_of_addr=no_of_users,
+        )
+        return pool_users
 
     if caching_key:
         with cluster_manager.cache_fixture(key=caching_key) as fixture_cache:
             if fixture_cache.value:
                 return fixture_cache.value  # type: ignore
 
-            pool_user = _create_user()
-            fixture_cache.value = pool_user
+            pool_users = _create_user()
+            fixture_cache.value = pool_users
     else:
-        pool_user = _create_user()
+        pool_users = _create_user()
 
     # Fund the payment address with some ADA
-    clusterlib_utils.fund_from_faucet(
-        pool_user.payment,
-        cluster_obj=cluster_obj,
-        faucet_data=cluster_manager.cache.addrs_data["user1"],
-        amount=fund_amount,
-    )
+    for pool_user in pool_users:
+        clusterlib_utils.fund_from_faucet(
+            pool_user.payment,
+            cluster_obj=cluster_obj,
+            faucet_data=cluster_manager.cache.addrs_data["user1"],
+            amount=fund_amount,
+        )
 
     # Register the stake address
     stake_deposit_amt = cluster_obj.g_query.get_address_deposit()
-    stake_addr_reg_cert = cluster_obj.g_stake_address.gen_stake_addr_registration_cert(
-        addr_name=f"{name_template}_pool_user",
-        deposit_amt=stake_deposit_amt,
-        stake_vkey_file=pool_user.stake.vkey_file,
-    )
+    stake_addr_reg_cert = [
+        cluster_obj.g_stake_address.gen_stake_addr_registration_cert(
+            addr_name=f"{name_template}_pool_user{i}",
+            deposit_amt=stake_deposit_amt,
+            stake_vkey_file=pool_users[i].stake.vkey_file,
+        )
+        for i in range(no_of_users)
+    ]
+    pool_users_payment_skey = [pool_user.payment.skey_file for pool_user in pool_users]
+    pool_users_stake_skey = [pool_user.stake.skey_file for pool_user in pool_users]
     tx_files_action = clusterlib.TxFiles(
-        certificate_files=[stake_addr_reg_cert],
-        signing_key_files=[pool_user.payment.skey_file, pool_user.stake.skey_file],
+        certificate_files= stake_addr_reg_cert,
+        signing_key_files=pool_users_payment_skey + pool_users_stake_skey,
     )
-
     clusterlib_utils.build_and_submit_tx(
         cluster_obj=cluster_obj,
         name_template=f"{name_template}_pool_user",
-        src_address=pool_user.payment.address,
+        src_address=pool_users[0].payment.address,
         use_build_cmd=True,
         tx_files=tx_files_action,
     )
+    for pool_user in pool_users:
+        assert cluster_obj.g_query.get_stake_addr_info(
+            pool_user.stake.address
+        ).address, f"Stake address is not registered: {pool_user.stake.address}"
 
-    assert cluster_obj.g_query.get_stake_addr_info(
-        pool_user.stake.address
-    ).address, f"Stake address is not registered: {pool_user.stake.address}"
-
-    return pool_user
+    return pool_users
 
 
 def submit_vote(

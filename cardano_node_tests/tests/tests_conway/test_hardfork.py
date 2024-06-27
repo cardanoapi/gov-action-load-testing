@@ -200,7 +200,7 @@ class TestHardfork:
         )
 
         # Testnet will be using an unexpected protocol version, respin is needed
-        cluster_manager.set_needs_respin()
+        # cluster_manager.set_needs_respin()
 
         # Check ratification
         _cur_epoch = cluster.wait_for_new_epoch(padding_seconds=5)
