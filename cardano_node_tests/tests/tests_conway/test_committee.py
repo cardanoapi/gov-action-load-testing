@@ -63,11 +63,11 @@ def payment_addr_comm(
 
 
 @pytest.fixture
-def pool_user(
+def pool_users(
     cluster_manager: cluster_management.ClusterManager,
     cluster: clusterlib.ClusterLib,
-) -> clusterlib.PoolUser:
-    """Create a pool user."""
+) -> tp.List[clusterlib.PoolUser]:
+    """Create pool users."""
     key = helpers.get_current_line_str()
     name_template = common.get_test_id(cluster)
     return conway_common.get_registered_pool_user(
@@ -75,10 +75,11 @@ def pool_user(
         name_template=name_template,
         cluster_obj=cluster,
         caching_key=key,
+        no_of_users=30
     )
 
 @pytest.fixture
-def pool_user_lg(
+def pool_users_lg(
     cluster_manager: cluster_management.ClusterManager,
     cluster_lock_governance: governance_setup.GovClusterT,
 ) -> clusterlib.PoolUser:
@@ -241,7 +242,7 @@ class TestCommittee:
     def test_update_committee_action(
         self,
         cluster: clusterlib.ClusterLib,
-        pool_user: clusterlib.PoolUser,
+        pool_users: clusterlib.PoolUser,
         use_build_cmd: bool,
         submit_method: str,
     ):
@@ -252,8 +253,8 @@ class TestCommittee:
         * check that the proposed changes are correct in `query gov-state`
         """
         temp_template = common.get_test_id(cluster)
-        cc_size = 3
-
+        cc_size = 80
+        pool_user = pool_users[0]
         cc_auth_records = [
             governance_utils.get_cc_member_auth_record(
                 cluster_obj=cluster,
@@ -359,13 +360,13 @@ class TestCommittee:
     def test_add_rm_committee_members(  # noqa: C901
         self,
         cluster_lock_governance: governance_setup.GovClusterT,
-        pool_user_lg: clusterlib.PoolUser,
+        pool_users_lg: clusterlib.PoolUser,
         testfile_temp_dir: pl.Path,
         request: FixtureRequest,
     ):
         """Test adding and removing CC members.
 
-        * authorize hot keys of 3 new potential CC members
+        * authorize hot keys of 80 new potential CC members
         * create the first "update committee" action to add 2 of the 3 new potential CC members
 
             - the first CC member is listed twice to test that it's not possible to add the same
@@ -399,11 +400,16 @@ class TestCommittee:
         """
         # pylint: disable=too-many-locals,too-many-statements,too-many-branches
         cluster, governance_data = cluster_lock_governance
+        print("DReps: ", len(governance_data.dreps_reg))
+        print("Pool Users: ", len(governance_data.drep_delegators))
+        print("CCMembers: ", len(governance_data.cc_members))
+        print("Cold Keypairs: ", len(governance_data.pools_cold))
         temp_template = common.get_test_id(cluster)
 
         if conway_common.is_in_bootstrap(cluster_obj=cluster):
             pytest.skip("Cannot run during bootstrap period.")
 
+        pool_user_lg = pool_users_lg[0]
         deposit_amt = cluster.conway_genesis["govActionDeposit"]
 
         # Check if total delegated stake is below the threshold. This can be used to check that

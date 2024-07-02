@@ -1,6 +1,7 @@
 """Common functionality for Conway governance tests."""
 
 import dataclasses
+from itertools import chain
 import json
 import logging
 import typing as tp
@@ -372,7 +373,7 @@ def propose_change_constitution(
     anchor_data_hash: str,
     constitution_url: str,
     constitution_hash: str,
-    pool_user: clusterlib.PoolUser,
+    pool_users: clusterlib.PoolUser,
 ) -> tp.Tuple[clusterlib.ActionConstitution, str, int]:
     """Propose a constitution change."""
     deposit_amt = cluster_obj.conway_genesis["govActionDeposit"]
@@ -382,41 +383,46 @@ def propose_change_constitution(
         gov_state=cluster_obj.g_conway_governance.query.gov_state(),
     )
 
-    constitution_action = cluster_obj.g_conway_governance.action.create_constitution(
-        action_name=name_template,
-        deposit_amt=deposit_amt,
-        anchor_url=anchor_url,
-        anchor_data_hash=anchor_data_hash,
-        constitution_url=constitution_url,
-        constitution_hash=constitution_hash,
-        prev_action_txid=prev_action_rec.txid,
-        prev_action_ix=prev_action_rec.ix,
-        deposit_return_stake_vkey_file=pool_user.stake.vkey_file,
-    )
+    constitution_actions = [
+        cluster_obj.g_conway_governance.action.create_constitution(
+            action_name=name_template,
+            deposit_amt=deposit_amt,
+            anchor_url=anchor_url,
+            anchor_data_hash=anchor_data_hash,
+            constitution_url=constitution_url,
+            constitution_hash=constitution_hash,
+            prev_action_txid=prev_action_rec.txid,
+            prev_action_ix=prev_action_rec.ix,
+            deposit_return_stake_vkey_file=pool_user.stake.vkey_file,
+        )
+        for pool_user in pool_users
+    ]
 
     tx_files = clusterlib.TxFiles(
-        proposal_files=[constitution_action.action_file],
-        signing_key_files=[pool_user.payment.skey_file],
+        proposal_files=[constitution_action.action_file for constitution_action in constitution_actions],
+        signing_key_files=[pool_user.payment.skey_file for pool_user in pool_users],
     )
 
     # Make sure we have enough time to submit the proposal in one epoch
     clusterlib_utils.wait_for_epoch_interval(
         cluster_obj=cluster_obj, start=1, stop=common.EPOCH_STOP_SEC_BUFFER
     )
-
+    address_utxos = [cluster_obj.g_query.get_utxo(pool_user.payment.address) for pool_user in pool_users]
+    flatenned_utxos = list(chain.from_iterable(address_utxos))
     tx_output = clusterlib_utils.build_and_submit_tx(
         cluster_obj=cluster_obj,
         name_template=f"{name_template}_constitution_action",
-        src_address=pool_user.payment.address,
+        src_address=pool_users[0].payment.address,
+        txins=flatenned_utxos,
         use_build_cmd=True,
         tx_files=tx_files,
     )
 
     out_utxos = cluster_obj.g_query.get_utxo(tx_raw_output=tx_output)
     assert (
-        clusterlib.filter_utxos(utxos=out_utxos, address=pool_user.payment.address)[0].amount
+        clusterlib.filter_utxos(utxos=out_utxos, address=pool_users[0].payment.address)[0].amount
         == clusterlib.calculate_utxos_balance(tx_output.txins) - tx_output.fee - deposit_amt
-    ), f"Incorrect balance for source address `{pool_user.payment.address}`"
+    ), f"Incorrect balance for source address `{pool_users[0].payment.address}`"
 
     action_txid = cluster_obj.g_transaction.get_txid(tx_body_file=tx_output.out_file)
     action_gov_state = cluster_obj.g_conway_governance.query.gov_state()
@@ -436,7 +442,7 @@ def propose_change_constitution(
 
     action_ix = prop_action["actionId"]["govActionIx"]
 
-    return constitution_action, action_txid, action_ix
+    return constitution_actions, action_txid, action_ix
 
 
 def propose_pparams_update(
@@ -444,7 +450,7 @@ def propose_pparams_update(
     name_template: str,
     anchor_url: str,
     anchor_data_hash: str,
-    pool_user: clusterlib.PoolUser,
+    pool_users: clusterlib.PoolUser,
     proposals: tp.List[clusterlib_utils.UpdateProposal],
     prev_action_rec: tp.Optional[governance_utils.PrevActionRec] = None,
 ) -> PParamPropRec:
@@ -457,20 +463,23 @@ def propose_pparams_update(
     )
 
     update_args = clusterlib_utils.get_pparams_update_args(update_proposals=proposals)
-    pparams_action = cluster_obj.g_conway_governance.action.create_pparams_update(
-        action_name=name_template,
-        deposit_amt=deposit_amt,
-        anchor_url=anchor_url,
-        anchor_data_hash=anchor_data_hash,
-        cli_args=update_args,
-        prev_action_txid=prev_action_rec.txid,
-        prev_action_ix=prev_action_rec.ix,
-        deposit_return_stake_vkey_file=pool_user.stake.vkey_file,
-    )
+    pparams_actions = [
+        cluster_obj.g_conway_governance.action.create_pparams_update(
+            action_name=name_template,
+            deposit_amt=deposit_amt,
+            anchor_url=anchor_url,
+            anchor_data_hash=anchor_data_hash,
+            cli_args=update_args,
+            prev_action_txid=prev_action_rec.txid,
+            prev_action_ix=prev_action_rec.ix,
+            deposit_return_stake_vkey_file=pool_user.stake.vkey_file,
+        )
+        for pool_user in pool_users
+    ]
 
     tx_files_action = clusterlib.TxFiles(
-        proposal_files=[pparams_action.action_file],
-        signing_key_files=[pool_user.payment.skey_file],
+        proposal_files=[pparams_action.action_file for pparams_action in pparams_actions],
+        signing_key_files=[pool_user.payment.skey_file for pool_user in pool_users],
     )
 
     # Make sure we have enough time to submit the proposal in one epoch
@@ -481,18 +490,18 @@ def propose_pparams_update(
     tx_output_action = clusterlib_utils.build_and_submit_tx(
         cluster_obj=cluster_obj,
         name_template=f"{name_template}_action",
-        src_address=pool_user.payment.address,
+        src_address=pool_users[0].payment.address,
         use_build_cmd=True,
         tx_files=tx_files_action,
     )
 
     out_utxos_action = cluster_obj.g_query.get_utxo(tx_raw_output=tx_output_action)
     assert (
-        clusterlib.filter_utxos(utxos=out_utxos_action, address=pool_user.payment.address)[0].amount
+        clusterlib.filter_utxos(utxos=out_utxos_action, address=pool_users[0].payment.address)[0].amount
         == clusterlib.calculate_utxos_balance(tx_output_action.txins)
         - tx_output_action.fee
         - deposit_amt
-    ), f"Incorrect balance for source address `{pool_user.payment.address}`"
+    ), f"Incorrect balance for source address `{pool_users[0].payment.address}`"
 
     action_txid = cluster_obj.g_transaction.get_txid(tx_body_file=tx_output_action.out_file)
     action_gov_state = cluster_obj.g_conway_governance.query.gov_state()
