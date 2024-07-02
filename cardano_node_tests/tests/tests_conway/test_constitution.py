@@ -6,7 +6,7 @@ import logging
 import allure
 import pytest
 from cardano_clusterlib import clusterlib
-
+import typing as tp
 from cardano_node_tests.cluster_management import cluster_management
 from cardano_node_tests.tests import common
 from cardano_node_tests.tests import issues
@@ -26,10 +26,10 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture
-def pool_user_lg(
+def pool_users_lg(
     cluster_manager: cluster_management.ClusterManager,
     cluster_lock_governance: governance_setup.GovClusterT,
-) -> clusterlib.PoolUser:
+) -> tp.List[clusterlib.PoolUser]:
     """Create a pool user for "lock governance"."""
     cluster, __ = cluster_lock_governance
     key = helpers.get_current_line_str()
@@ -39,6 +39,7 @@ def pool_user_lg(
         name_template=name_template,
         cluster_obj=cluster,
         caching_key=key,
+        no_of_users=30
     )
 
 
@@ -50,7 +51,7 @@ class TestConstitution:
     def test_change_constitution(
         self,
         cluster_lock_governance: governance_setup.GovClusterT,
-        pool_user_lg: clusterlib.PoolUser,
+        pool_users_lg: tp.List[clusterlib.PoolUser],
     ):
         """Test enactment of change of constitution.
 
@@ -66,9 +67,9 @@ class TestConstitution:
         # pylint: disable=too-many-locals,too-many-statements
         cluster, governance_data = cluster_lock_governance
         temp_template = common.get_test_id(cluster)
-
+        
         # Create an action
-
+        total_participants = len(pool_users_lg)
         anchor_url = "http://www.const-action.com"
         anchor_data_hash = cluster.g_conway_governance.get_anchor_data_hash(text=anchor_url)
 
@@ -101,16 +102,16 @@ class TestConstitution:
                     anchor_data_hash=anchor_data_hash,
                     constitution_url=constitution_url,
                     constitution_hash=constitution_hash,
-                    pool_user=pool_user_lg,
+                    pool_users=pool_users_lg,
                 )
             err_str = str(excinfo.value)
             assert "(DisallowedProposalDuringBootstrap" in err_str, err_str
             return
-
+        print(f"{len(pool_users_lg)} proposals for no-confidence action are being submitted in a single transaction")
         _url = helpers.get_vcs_link()
         [r.start(url=_url) for r in (reqc.cli013, reqc.cip031a_02, reqc.cip031c_01, reqc.cip054_03)]
         (
-            constitution_action,
+            constitution_actions,
             action_txid,
             action_ix,
         ) = conway_common.propose_change_constitution(
@@ -120,7 +121,7 @@ class TestConstitution:
             anchor_data_hash=anchor_data_hash,
             constitution_url=constitution_url,
             constitution_hash=constitution_hash,
-            pool_user=pool_user_lg,
+            pool_users=pool_users_lg,
         )
         [r.success() for r in (reqc.cli013, reqc.cip031a_02, reqc.cip031c_01, reqc.cip054_03)]
 
@@ -130,7 +131,7 @@ class TestConstitution:
                 cluster_obj=cluster,
                 governance_data=governance_data,
                 name_template=f"{temp_template}_with_spos",
-                payment_addr=pool_user_lg.payment,
+                payment_addr=pool_users_lg[0].payment,
                 action_txid=action_txid,
                 action_ix=action_ix,
                 approve_cc=False,
@@ -145,20 +146,22 @@ class TestConstitution:
             cluster_obj=cluster,
             governance_data=governance_data,
             name_template=f"{temp_template}_no",
-            payment_addr=pool_user_lg.payment,
+            payment_addr=pool_users_lg[0].payment,
             action_txid=action_txid,
             action_ix=action_ix,
             approve_cc=False,
             approve_drep=False,
         )
 
+        print(len(governance_data.cc_members), " CC members are voting")
+        print(len(governance_data.dreps_reg), " DReps are voting")
         # Vote & approve the action
         reqc.cip042.start(url=helpers.get_vcs_link())
         voted_votes = conway_common.cast_vote(
             cluster_obj=cluster,
             governance_data=governance_data,
             name_template=f"{temp_template}_yes",
-            payment_addr=pool_user_lg.payment,
+            payment_addr=pool_users_lg[0].payment,
             action_txid=action_txid,
             action_ix=action_ix,
             approve_cc=True,
@@ -180,12 +183,25 @@ class TestConstitution:
         def _check_cli_query():
             anchor = cluster.g_conway_governance.query.constitution()["anchor"]
             _assert_anchor(anchor)
+        
+        # check proposaal 
+        while True:
+            proposal_gov_state = cluster.g_conway_governance.query.gov_state()
+            proposal_action = governance_utils.lookup_proposal(gov_state=proposal_gov_state, action_txid=action_txid)
+            if proposal_action:
+                print("NewConstitution Action in proposal")
+                # Wait for one epoch interval
+                curr_epoch = cluster.wait_for_new_epoch(padding_seconds=5)
+                print(f"current epoch: {curr_epoch}")
+            else:
+                break
 
         # Check ratification
         xfail_ledger_3979_msgs = set()
         for __ in range(3):
-            _cur_epoch = cluster.wait_for_new_epoch(padding_seconds=5)
+            _cur_epoch = cluster.wait_for_new_epoch(new_epochs=2, padding_seconds=5)
             rat_gov_state = cluster.g_conway_governance.query.gov_state()
+            print(rat_gov_state)
             conway_common.save_gov_state(
                 gov_state=rat_gov_state, name_template=f"{temp_template}_rat_{_cur_epoch}"
             )
@@ -211,7 +227,7 @@ class TestConstitution:
             cluster_obj=cluster,
             governance_data=governance_data,
             name_template=f"{temp_template}_after_ratification",
-            payment_addr=pool_user_lg.payment,
+            payment_addr=pool_users_lg[0].payment,
             action_txid=action_txid,
             action_ix=action_ix,
             approve_cc=False,
@@ -256,7 +272,7 @@ class TestConstitution:
                 cluster_obj=cluster,
                 governance_data=governance_data,
                 name_template=f"{temp_template}_enacted",
-                payment_addr=pool_user_lg.payment,
+                payment_addr=pool_users_lg[0].payment,
                 action_txid=action_txid,
                 action_ix=action_ix,
                 approve_cc=False,
@@ -267,7 +283,7 @@ class TestConstitution:
 
         # Check action view
         reqc.cli020.start(url=helpers.get_vcs_link())
-        governance_utils.check_action_view(cluster_obj=cluster, action_data=constitution_action)
+        governance_utils.check_action_view(cluster_obj=cluster, action_data=constitution_actions[total_participants -1])
         reqc.cli020.success()
 
         # Check vote view

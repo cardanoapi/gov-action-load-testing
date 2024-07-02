@@ -25,7 +25,7 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture
-def pool_user_lg(
+def pool_users_lg(
     cluster_manager: cluster_management.ClusterManager,
     cluster_lock_governance: governance_setup.GovClusterT,
 ) -> clusterlib.PoolUser:
@@ -59,7 +59,7 @@ class TestHardfork:
         skip_hf_command: None,  # noqa: ARG002
         cluster_manager: cluster_management.ClusterManager,
         cluster_lock_governance: governance_setup.GovClusterT,
-        pool_user_lg: clusterlib.PoolUser,
+        pool_users_lg: clusterlib.PoolUser,
     ):
         """Test hardfork action.
 
@@ -73,13 +73,18 @@ class TestHardfork:
         * check that it's not possible to vote on enacted action
         """
         cluster, governance_data = cluster_lock_governance
+        dreps= len(governance_data.dreps_reg)
+        pool_users= len(governance_data.drep_delegators)
+        cc_members= len(governance_data.cc_members)
+        spo = len(governance_data.pools_cold)
+        print("Dreps: ", dreps, "pool_users: ", pool_users, "cc_members: ", cc_members, "SPOs: ", spo)
         temp_template = common.get_test_id(cluster)
 
         if not conway_common.is_in_bootstrap(cluster_obj=cluster):
             pytest.skip("The major protocol version needs to be 9.")
 
         init_return_account_balance = cluster.g_query.get_stake_addr_info(
-            pool_user_lg.stake.address
+            pool_users_lg[0].stake.address
         ).reward_account_balance
 
         # Create an action
@@ -106,14 +111,14 @@ class TestHardfork:
             protocol_minor_version=0,
             prev_action_txid=prev_action_rec.txid,
             prev_action_ix=prev_action_rec.ix,
-            deposit_return_stake_vkey_file=pool_user_lg.stake.vkey_file,
+            deposit_return_stake_vkey_file=pool_users_lg[0].stake.vkey_file,
         )
         [r.success() for r in (reqc.cip031a_07, reqc.cip031d, reqc.cip054_07)]
 
         tx_files_action = clusterlib.TxFiles(
             proposal_files=[hardfork_action.action_file],
             signing_key_files=[
-                pool_user_lg.payment.skey_file,
+                pool_users_lg[0].payment.skey_file,
             ],
         )
 
@@ -125,20 +130,20 @@ class TestHardfork:
         tx_output_action = clusterlib_utils.build_and_submit_tx(
             cluster_obj=cluster,
             name_template=f"{temp_template}_action",
-            src_address=pool_user_lg.payment.address,
+            src_address=pool_users_lg[0].payment.address,
             use_build_cmd=True,
             tx_files=tx_files_action,
         )
 
         out_utxos_action = cluster.g_query.get_utxo(tx_raw_output=tx_output_action)
         assert (
-            clusterlib.filter_utxos(utxos=out_utxos_action, address=pool_user_lg.payment.address)[
+            clusterlib.filter_utxos(utxos=out_utxos_action, address=pool_users_lg[0].payment.address)[
                 0
             ].amount
             == clusterlib.calculate_utxos_balance(tx_output_action.txins)
             - tx_output_action.fee
             - deposit_amt
-        ), f"Incorrect balance for source address `{pool_user_lg.payment.address}`"
+        ), f"Incorrect balance for source address `{pool_users_lg[0].payment.address}`"
 
         action_txid = cluster.g_transaction.get_txid(tx_body_file=tx_output_action.out_file)
         action_gov_state = cluster.g_conway_governance.query.gov_state()
@@ -163,7 +168,7 @@ class TestHardfork:
                 cluster_obj=cluster,
                 governance_data=governance_data,
                 name_template=f"{temp_template}_no",
-                payment_addr=pool_user_lg.payment,
+                payment_addr=pool_users_lg[0].payment,
                 action_txid=action_txid,
                 action_ix=action_ix,
                 approve_cc=False,
@@ -179,7 +184,7 @@ class TestHardfork:
             cluster_obj=cluster,
             governance_data=governance_data,
             name_template=f"{temp_template}_no",
-            payment_addr=pool_user_lg.payment,
+            payment_addr=pool_users_lg[0].payment,
             action_txid=action_txid,
             action_ix=action_ix,
             approve_cc=False,
@@ -192,7 +197,7 @@ class TestHardfork:
             cluster_obj=cluster,
             governance_data=governance_data,
             name_template=f"{temp_template}_yes",
-            payment_addr=pool_user_lg.payment,
+            payment_addr=pool_users_lg[0].payment,
             action_txid=action_txid,
             action_ix=action_ix,
             approve_cc=True,
@@ -201,10 +206,27 @@ class TestHardfork:
 
         # Testnet will be using an unexpected protocol version, respin is needed
         # cluster_manager.set_needs_respin()
-
+        
+        #Check proposal 
+        while True:
+            proposal_gov_state = cluster.g_conway_governance.query.gov_state()
+            proposal_action = governance_utils.lookup_proposal(gov_state=proposal_gov_state, action_txid=action_txid)
+            if proposal_action:
+                print("Hardfork Action in proposal")
+                # Wait for one epoch interval
+                curr_epoch = cluster.wait_for_new_epoch(padding_seconds=5)
+                print(f"current epoch: {curr_epoch}")
+            else:
+                break
+        
         # Check ratification
+
+        clusterlib_utils.wait_for_epoch_interval(
+            cluster_obj=cluster, start=1, stop=common.EPOCH_STOP_SEC_LEDGER_STATE
+        )
         _cur_epoch = cluster.wait_for_new_epoch(padding_seconds=5)
         rat_gov_state = cluster.g_conway_governance.query.gov_state()
+        
         conway_common.save_gov_state(
             gov_state=rat_gov_state, name_template=f"{temp_template}_rat_{_cur_epoch}"
         )
@@ -219,7 +241,7 @@ class TestHardfork:
             cluster_obj=cluster,
             governance_data=governance_data,
             name_template=f"{temp_template}_after_ratification",
-            payment_addr=pool_user_lg.payment,
+            payment_addr=pool_users_lg[0].payment,
             action_txid=action_txid,
             action_ix=action_ix,
             approve_cc=False,
@@ -247,7 +269,7 @@ class TestHardfork:
         assert enact_prev_action_rec.ix == action_ix, "Incorrect previous action index"
 
         enact_deposit_returned = cluster.g_query.get_stake_addr_info(
-            pool_user_lg.stake.address
+            pool_users_lg[0].stake.address
         ).reward_account_balance
 
         assert (
@@ -260,7 +282,7 @@ class TestHardfork:
                 cluster_obj=cluster,
                 governance_data=governance_data,
                 name_template=f"{temp_template}_enacted",
-                payment_addr=pool_user_lg.payment,
+                payment_addr=pool_users_lg[0].payment,
                 action_txid=action_txid,
                 action_ix=action_ix,
                 approve_drep=False,
