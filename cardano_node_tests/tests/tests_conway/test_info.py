@@ -1,12 +1,14 @@
 """Tests for Conway governance info."""
 
 # pylint: disable=expression-not-assigned
+from itertools import chain
 import logging
 import typing as tp
 
 import allure
 import pytest
 from cardano_clusterlib import clusterlib
+from cardano_clusterlib.query_group import QueryGroup
 
 from cardano_node_tests.cluster_management import cluster_management
 from cardano_node_tests.tests import common
@@ -29,7 +31,7 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture
-def pool_user_ug(
+def pool_users_ug(
     cluster_manager: cluster_management.ClusterManager,
     cluster_use_governance: governance_setup.GovClusterT,
 ) -> clusterlib.PoolUser:
@@ -42,8 +44,8 @@ def pool_user_ug(
         name_template=name_template,
         cluster_obj=cluster,
         caching_key=key,
+        no_of_users= 30
     )
-
 
 class TestInfo:
     """Tests for info."""
@@ -52,7 +54,7 @@ class TestInfo:
     def test_info(
         self,
         cluster_use_governance: governance_setup.GovClusterT,
-        pool_user_ug: clusterlib.PoolUser,
+        pool_users_ug: clusterlib.PoolUser,
     ):
         """Test voting on info action.
 
@@ -64,39 +66,44 @@ class TestInfo:
         cluster, governance_data = cluster_use_governance
         temp_template = common.get_test_id(cluster)
         action_deposit_amt = cluster.conway_genesis["govActionDeposit"]
-
+        total_participants = len(pool_users_ug)
         # Create an action
 
         rand_str = helpers.get_rand_str(4)
         anchor_url = f"http://www.info-action-{rand_str}.com"
         anchor_data_hash = "5d372dca1a4cc90d7d16d966c48270e33e3aa0abcb0e78f0d5ca7ff330d2245d"
-
         _url = helpers.get_vcs_link()
         [r.start(url=_url) for r in (reqc.cli016, reqc.cip031a_03, reqc.cip054_06)]
-        info_action = cluster.g_conway_governance.action.create_info(
-            action_name=temp_template,
-            deposit_amt=action_deposit_amt,
-            anchor_url=anchor_url,
-            anchor_data_hash=anchor_data_hash,
-            deposit_return_stake_vkey_file=pool_user_ug.stake.vkey_file,
-        )
+        info_actions = [
+            cluster.g_conway_governance.action.create_info(
+                action_name= temp_template,
+                deposit_amt= action_deposit_amt,
+                anchor_url= anchor_url,
+                anchor_data_hash= anchor_data_hash,
+                deposit_return_stake_vkey_file=pool_users_ug[i].stake.vkey_file,
+            )
+            for i in range(total_participants)
+        ]
+        print(f"{len(info_actions)} proposals for info action are being submitted in a single transaction")
         [r.success() for r in (reqc.cli016, reqc.cip031a_03, reqc.cip054_06)]
 
         tx_files_action = clusterlib.TxFiles(
-            proposal_files=[info_action.action_file],
-            signing_key_files=[pool_user_ug.payment.skey_file],
+            proposal_files=[info_action.action_file for info_action in info_actions],
+            signing_key_files=[pool_user_ug.payment.skey_file for pool_user_ug in pool_users_ug],
         )
 
         # Make sure we have enough time to submit the proposal in one epoch
         clusterlib_utils.wait_for_epoch_interval(
             cluster_obj=cluster, start=1, stop=common.EPOCH_STOP_SEC_BUFFER
         )
-
+        address_utxos = [cluster.g_query.get_utxo(pool_user_ug.payment.address) for pool_user_ug in pool_users_ug]
+        flatenned_utxos = list(chain.from_iterable(address_utxos))
         reqc.cli023.start(url=helpers.get_vcs_link())
         tx_output_action = clusterlib_utils.build_and_submit_tx(
             cluster_obj=cluster,
             name_template=f"{temp_template}_action",
-            src_address=pool_user_ug.payment.address,
+            src_address=pool_users_ug[0].payment.address,
+            txins= flatenned_utxos,
             use_build_cmd=True,
             tx_files=tx_files_action,
         )
@@ -104,13 +111,13 @@ class TestInfo:
 
         out_utxos_action = cluster.g_query.get_utxo(tx_raw_output=tx_output_action)
         assert (
-            clusterlib.filter_utxos(utxos=out_utxos_action, address=pool_user_ug.payment.address)[
+            clusterlib.filter_utxos(utxos=out_utxos_action, address=pool_users_ug[0].payment.address)[
                 0
             ].amount
             == clusterlib.calculate_utxos_balance(tx_output_action.txins)
             - tx_output_action.fee
-            - action_deposit_amt
-        ), f"Incorrect balance for source address `{pool_user_ug.payment.address}`"
+            - (action_deposit_amt)
+        ), f"Incorrect balance for source address `{pool_users_ug[0].payment.address}`"
 
         action_txid = cluster.g_transaction.get_txid(tx_body_file=tx_output_action.out_file)
         reqc.cli031.start(url=helpers.get_vcs_link())
@@ -135,6 +142,9 @@ class TestInfo:
 
         _url = helpers.get_vcs_link()
         [r.start(url=_url) for r in (reqc.cli021, reqc.cip053, reqc.cip059)]
+        print(len(governance_data.cc_members), " CC members are voting")
+        print(len(governance_data.dreps_reg), " DReps are voting")
+        print(len(governance_data.pools_cold), " SPOs are voting")
         votes_cc = [
             cluster.g_conway_governance.vote.create_committee(
                 vote_name=f"{temp_template}_cc{i}",
@@ -183,7 +193,7 @@ class TestInfo:
         vote_tx_output = conway_common.submit_vote(
             cluster_obj=cluster,
             name_template=temp_template,
-            payment_addr=pool_user_ug.payment,
+            payment_addr=pool_users_ug[0].payment,
             votes=votes,
             keys=vote_keys,
             use_build_cmd=True,
@@ -224,8 +234,8 @@ class TestInfo:
         ], "Ratification is delayed unexpectedly"
         reqc.cip038_05.success()
 
-        # Check action view
-        governance_utils.check_action_view(cluster_obj=cluster, action_data=info_action)
+        # Check the last action view 
+        governance_utils.check_action_view(cluster_obj=cluster, action_data=info_actions[total_participants-1])
 
         # Check vote view
         reqc.cli022.start(url=helpers.get_vcs_link())
