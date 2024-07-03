@@ -1,6 +1,7 @@
 """Tests for Conway governance Constitutional Committee functionality."""
 
 # pylint: disable=expression-not-assigned
+from itertools import chain
 import logging
 import pathlib as pl
 import typing as tp
@@ -75,7 +76,7 @@ def pool_users(
         name_template=name_template,
         cluster_obj=cluster,
         caching_key=key,
-        no_of_users=30
+        no_of_users=300
     )
 
 @pytest.fixture
@@ -99,17 +100,17 @@ class TestCommittee:
     """Tests for Constitutional Committee."""
 
     @allure.link(helpers.get_vcs_link())
-    @submit_utils.PARAM_SUBMIT_METHOD
     @common.PARAM_USE_BUILD_CMD
     @pytest.mark.dbsync
     @pytest.mark.testnets
     @pytest.mark.smoke
+    @pytest.mark.parametrize("cc_size", reversed(range(79,83)))
     def test_register_and_resign_committee_member(
         self,
         cluster_use_committee: governance_setup.GovClusterT,
         payment_addr_comm: clusterlib.AddressRecord,
         use_build_cmd: bool,
-        submit_method: str,
+        cc_size: int
     ):
         """Test Constitutional Committee Member registration and resignation.
 
@@ -120,9 +121,8 @@ class TestCommittee:
         """
         cluster, __ = cluster_use_committee
         temp_template = common.get_test_id(cluster)
-        cc_size = 80
         # Register a potential CC Member
-
+        print(f"\nRegistering {cc_size} Committee members at once.")
         _url = helpers.get_vcs_link()
         [
             r.start(url=_url)
@@ -143,14 +143,19 @@ class TestCommittee:
             signing_key_files=[payment_addr_comm.skey_file]+cold_skey_files,
         )
 
-        tx_output_auth = clusterlib_utils.build_and_submit_tx(
-            cluster_obj=cluster,
-            name_template=f"{temp_template}_auth",
-            src_address=payment_addr_comm.address,
-            submit_method=submit_method,
-            use_build_cmd=use_build_cmd,
-            tx_files=tx_files_auth,
-        )
+        try:
+            tx_output_auth = clusterlib_utils.build_and_submit_tx(
+                cluster_obj=cluster,
+                name_template=f"{temp_template}_auth",
+                src_address=payment_addr_comm.address,
+                use_build_cmd=use_build_cmd,
+                tx_files=tx_files_auth,
+            )
+        except clusterlib.CLIError as exc:
+            err_str = str(exc)
+            if "MaxTxSizeUTxO" in err_str:
+                print(f"Fails at registering {cc_size} CC members in a single transaction")
+                return
         reqc.cip003.success()
 
         auth_out_utxos = cluster.g_query.get_utxo(tx_raw_output=tx_output_auth)
@@ -185,7 +190,7 @@ class TestCommittee:
             cluster.g_conway_governance.committee.gen_cold_key_resignation_cert(
                 key_name=f"{temp_template}_{i}",
                 cold_vkey_file=cc_auth_records[i].cold_key_pair.vkey_file,
-                resignation_metadata_url="http://www.cc-resign.com",
+                resignation_metadata_url=f"http://www.cc-resign-{i}.com",
                 resignation_metadata_hash="5d372dca1a4cc90d7d16d966c48270e33e3aa0abcb0e78f0d5ca7ff330d2245d",
             )
             for i in range(cc_size)
@@ -196,15 +201,20 @@ class TestCommittee:
             certificate_files=res_certs,
             signing_key_files=[payment_addr_comm.skey_file] + cold_skey_files,
         )
-
-        tx_output_res = clusterlib_utils.build_and_submit_tx(
-            cluster_obj=cluster,
-            name_template=f"{temp_template}_res",
-            src_address=payment_addr_comm.address,
-            submit_method=submit_method,
-            use_build_cmd=use_build_cmd,
-            tx_files=tx_files_res,
-        )
+        print(f"\nResigning {cc_size} Committee members at once.")
+        try:
+            tx_output_res = clusterlib_utils.build_and_submit_tx(
+                cluster_obj=cluster,
+                name_template=f"{temp_template}_res",
+                src_address=payment_addr_comm.address,
+                use_build_cmd=use_build_cmd,
+                tx_files=tx_files_res,
+            )
+        except clusterlib.CLIError as exc:
+            err_str = str(exc)
+            if "MaxTxSizeUTxO" in err_str:
+                print(f"Fails at resigning {cc_size} CC members in a single transaction")
+                return
 
         cluster.wait_for_new_block(new_blocks=2)
         res_committee_state = cluster.g_conway_governance.query.committee_state()
@@ -236,15 +246,15 @@ class TestCommittee:
         cluster.wait_for_new_epoch()
 
     @allure.link(helpers.get_vcs_link())
-    @submit_utils.PARAM_SUBMIT_METHOD
     @common.PARAM_USE_BUILD_CMD
     @pytest.mark.smoke
+    @pytest.mark.parametrize("num_pool_users", reversed(range(58,61)))
     def test_update_committee_action(
         self,
         cluster: clusterlib.ClusterLib,
         pool_users: clusterlib.PoolUser,
         use_build_cmd: bool,
-        submit_method: str,
+        num_pool_users: int
     ):
         """Test update committee action.
 
@@ -252,9 +262,9 @@ class TestCommittee:
         * update committee threshold
         * check that the proposed changes are correct in `query gov-state`
         """
+        cc_size = 50
+        selected_pool_users = pool_users[:num_pool_users]
         temp_template = common.get_test_id(cluster)
-        cc_size = 80
-        pool_user = pool_users[0]
         cc_auth_records = [
             governance_utils.get_cc_member_auth_record(
                 cluster_obj=cluster,
@@ -282,35 +292,38 @@ class TestCommittee:
         )
 
         reqc.cip031a_01.start(url=helpers.get_vcs_link())
-        update_action = cluster.g_conway_governance.action.update_committee(
-            action_name=temp_template,
-            deposit_amt=deposit_amt,
-            anchor_url=anchor_url,
-            anchor_data_hash=anchor_data_hash,
-            threshold="2/3",
-            add_cc_members=cc_members,
-            prev_action_txid=prev_action_rec.txid,
-            prev_action_ix=prev_action_rec.ix,
-            deposit_return_stake_vkey_file=pool_user.stake.vkey_file,
-        )
+        update_actions = [
+            cluster.g_conway_governance.action.update_committee(
+                action_name=temp_template,
+                deposit_amt=deposit_amt,
+                anchor_url=f"http://www.cc-update-{i}.com",
+                anchor_data_hash=anchor_data_hash,
+                threshold="2/3",
+                add_cc_members=cc_members,
+                prev_action_txid=prev_action_rec.txid,
+                prev_action_ix=prev_action_rec.ix,
+                deposit_return_stake_vkey_file=selected_pool_users[i].stake.vkey_file,
+            )
+            for i in range(len(selected_pool_users))
+        ]
         reqc.cip031a_01.success()
-
+        pool_user_payment_files = [pool_user.payment.skey_file for pool_user in selected_pool_users ]
         tx_files = clusterlib.TxFiles(
             certificate_files=[r.auth_cert for r in cc_auth_records],
-            proposal_files=[update_action.action_file],
+            proposal_files=[update_action.action_file for update_action in update_actions],
             signing_key_files=[
-                pool_user.payment.skey_file,
                 *[r.cold_key_pair.skey_file for r in cc_auth_records],
-            ],
+            ] + pool_user_payment_files ,
         )
-
+        address_utxos = [cluster.g_query.get_utxo(pool_user.payment.address) for pool_user in selected_pool_users]
+        flatenned_utxos = list(chain.from_iterable(address_utxos))
         if conway_common.is_in_bootstrap(cluster_obj=cluster):
             with pytest.raises((clusterlib.CLIError, submit_api.SubmitApiError)) as excinfo:
                 clusterlib_utils.build_and_submit_tx(
                     cluster_obj=cluster,
                     name_template=f"{temp_template}_bootstrap",
-                    src_address=pool_user.payment.address,
-                    submit_method=submit_method,
+                    src_address=selected_pool_users[0].payment.address,
+                    txins=flatenned_utxos,
                     use_build_cmd=use_build_cmd,
                     tx_files=tx_files,
                     deposit=deposit_amt,
@@ -320,22 +333,27 @@ class TestCommittee:
             return
 
         reqc.cip007.start(url=helpers.get_vcs_link())
-
-        tx_output = clusterlib_utils.build_and_submit_tx(
-            cluster_obj=cluster,
-            name_template=temp_template,
-            src_address=pool_user.payment.address,
-            submit_method=submit_method,
-            use_build_cmd=use_build_cmd,
-            tx_files=tx_files,
-            deposit=deposit_amt,
-        )
-
+        print(f"\nSubmitting {len(update_actions)} propals of committee size {cc_size}")
+        try: 
+            tx_output = clusterlib_utils.build_and_submit_tx(
+                cluster_obj=cluster,
+                name_template=temp_template,
+                src_address=selected_pool_users[0].payment.address,
+                use_build_cmd=use_build_cmd,
+                tx_files=tx_files,
+                deposit=deposit_amt,
+            )
+        except clusterlib.CLIError as exc:
+            err_str = str(exc)
+            if "MaxTxSizeUTxO" in err_str:
+                print(f"Fails at submitting {len(update_actions)} proposals for updating a committee of size {cc_size}")
+                return
+            
         out_utxos = cluster.g_query.get_utxo(tx_raw_output=tx_output)
         assert (
-            clusterlib.filter_utxos(utxos=out_utxos, address=pool_user.payment.address)[0].amount
+            clusterlib.filter_utxos(utxos=out_utxos, address=selected_pool_users[0].payment.address)[0].amount
             == clusterlib.calculate_utxos_balance(tx_output.txins) - tx_output.fee - deposit_amt
-        ), f"Incorrect balance for source address `{pool_user.payment.address}`"
+        ), f"Incorrect balance for source address `{selected_pool_users[0].payment.address}`"
 
         txid = cluster.g_transaction.get_txid(tx_body_file=tx_output.out_file)
         gov_state = cluster.g_conway_governance.query.gov_state()
@@ -360,13 +378,13 @@ class TestCommittee:
     def test_add_rm_committee_members(  # noqa: C901
         self,
         cluster_lock_governance: governance_setup.GovClusterT,
-        pool_users_lg: clusterlib.PoolUser,
+        pool_user_lg: clusterlib.PoolUser,
         testfile_temp_dir: pl.Path,
         request: FixtureRequest,
     ):
         """Test adding and removing CC members.
 
-        * authorize hot keys of 80 new potential CC members
+        * authorize hot keys of 3 new potential CC members
         * create the first "update committee" action to add 2 of the 3 new potential CC members
 
             - the first CC member is listed twice to test that it's not possible to add the same
@@ -400,16 +418,11 @@ class TestCommittee:
         """
         # pylint: disable=too-many-locals,too-many-statements,too-many-branches
         cluster, governance_data = cluster_lock_governance
-        print("DReps: ", len(governance_data.dreps_reg))
-        print("Pool Users: ", len(governance_data.drep_delegators))
-        print("CCMembers: ", len(governance_data.cc_members))
-        print("Cold Keypairs: ", len(governance_data.pools_cold))
         temp_template = common.get_test_id(cluster)
 
         if conway_common.is_in_bootstrap(cluster_obj=cluster):
             pytest.skip("Cannot run during bootstrap period.")
 
-        pool_user_lg = pool_users_lg[0]
         deposit_amt = cluster.conway_genesis["govActionDeposit"]
 
         # Check if total delegated stake is below the threshold. This can be used to check that

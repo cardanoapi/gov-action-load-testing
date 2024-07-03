@@ -107,7 +107,7 @@ SECURITY_PPARAMS = {
 
 
 @pytest.fixture
-def pool_user_lg(
+def pool_users_lg(
     cluster_manager: cluster_management.ClusterManager,
     cluster_lock_governance: governance_setup.GovClusterT,
 ) -> clusterlib.PoolUser:
@@ -121,6 +121,7 @@ def pool_user_lg(
         cluster_obj=cluster,
         caching_key=key,
         fund_amount=2000_000_000,
+        no_of_users=300
     )
 
 
@@ -217,10 +218,12 @@ class TestPParamUpdate:
 
     @allure.link(helpers.get_vcs_link())
     @pytest.mark.long
+    @pytest.mark.parametrize("num_pool_users", reversed(range(116, 119)))
     def test_pparam_update(  # noqa: C901
         self,
         cluster_lock_governance: governance_setup.GovClusterT,
-        pool_user_lg: clusterlib.PoolUser,
+        pool_users_lg: tp.List[clusterlib.PoolUser],
+        num_pool_users: int
     ):
         """Test enactment of protocol parameter update.
 
@@ -638,15 +641,15 @@ class TestPParamUpdate:
         ) -> conway_common.PParamPropRec:
             anchor_url = f"http://www.pparam-action-{clusterlib.get_rand_str(4)}.com"
             anchor_data_hash = cluster.g_conway_governance.get_anchor_data_hash(text=anchor_url)
-
             return conway_common.propose_pparams_update(
                 cluster_obj=cluster,
                 name_template=name_template,
                 anchor_url=anchor_url,
                 anchor_data_hash=anchor_data_hash,
-                pool_user=pool_user_lg,
+                pool_users=pool_users_lg,
                 proposals=proposals,
                 prev_action_rec=prev_action_rec,
+                num_pool_users= num_pool_users
             )
 
         proposed_pparams_errors = []
@@ -669,29 +672,47 @@ class TestPParamUpdate:
         ]
 
         # Vote on update proposals from network group that will NOT get approved by DReps
+        
         _url = helpers.get_vcs_link()
         [r.start(url=_url) for r in (reqc.cli017, reqc.cip031a_05, reqc.cip031e, reqc.cip054_01)]
         if configuration.HAS_CC:
             reqc.cip006.start(url=_url)
-        net_nodrep_prop_rec = _propose_pparams_update(
-            name_template=f"{temp_template}_net_nodrep", proposals=network_g_proposals
-        )
-        [r.success() for r in (reqc.cli017, reqc.cip031a_05, reqc.cip031e, reqc.cip054_01)]
+        try: 
+            net_nodrep_prop_rec = _propose_pparams_update(
+                name_template=f"{temp_template}_net_nodrep", proposals=network_g_proposals
+            )
+            [r.success() for r in (reqc.cli017, reqc.cip031a_05, reqc.cip031e, reqc.cip054_01)]
 
-        _check_proposed_pparams(
-            update_proposals=net_nodrep_prop_rec.proposals,
-            protocol_params=net_nodrep_prop_rec.future_pparams,
-        )
+            _check_proposed_pparams(
+                update_proposals=net_nodrep_prop_rec.proposals,
+                protocol_params=net_nodrep_prop_rec.future_pparams,
+            )
 
-        reqc.cip061_04.start(url=_url)
+            reqc.cip061_04.start(url=_url)
 
-        if is_in_bootstrap:
-            with pytest.raises(clusterlib.CLIError) as excinfo:
+            if is_in_bootstrap:
+                with pytest.raises(clusterlib.CLIError) as excinfo:
+                    conway_common.cast_vote(
+                        cluster_obj=cluster,
+                        governance_data=governance_data,
+                        name_template=f"{temp_template}_net_nodrep_bootstrap",
+                        payment_addr=pool_users_lg[0].payment,
+                        action_txid=net_nodrep_prop_rec.action_txid,
+                        action_ix=net_nodrep_prop_rec.action_ix,
+                        approve_cc=True,
+                        approve_drep=False,
+                        approve_spo=None
+                        if net_nodrep_prop_rec.proposal_names.isdisjoint(SECURITY_PPARAMS)
+                        else True,
+                    )
+                err_str = str(excinfo.value)
+                assert "(DisallowedVotesDuringBootstrap" in err_str, err_str
+            else:
                 conway_common.cast_vote(
                     cluster_obj=cluster,
                     governance_data=governance_data,
-                    name_template=f"{temp_template}_net_nodrep_bootstrap",
-                    payment_addr=pool_user_lg.payment,
+                    name_template=f"{temp_template}_net_nodrep",
+                    payment_addr=pool_users_lg[0].payment,
                     action_txid=net_nodrep_prop_rec.action_txid,
                     action_ix=net_nodrep_prop_rec.action_ix,
                     approve_cc=True,
@@ -700,481 +721,478 @@ class TestPParamUpdate:
                     if net_nodrep_prop_rec.proposal_names.isdisjoint(SECURITY_PPARAMS)
                     else True,
                 )
-            err_str = str(excinfo.value)
-            assert "(DisallowedVotesDuringBootstrap" in err_str, err_str
-        else:
-            conway_common.cast_vote(
-                cluster_obj=cluster,
-                governance_data=governance_data,
-                name_template=f"{temp_template}_net_nodrep",
-                payment_addr=pool_user_lg.payment,
-                action_txid=net_nodrep_prop_rec.action_txid,
-                action_ix=net_nodrep_prop_rec.action_ix,
-                approve_cc=True,
-                approve_drep=False,
-                approve_spo=None
-                if net_nodrep_prop_rec.proposal_names.isdisjoint(SECURITY_PPARAMS)
-                else True,
-            )
 
-        # Vote on update proposals from network group that will NOT get approved by CC
-        if configuration.HAS_CC:
-            reqc.cip062_02.start(url=helpers.get_vcs_link())
-            net_nocc_prop_rec = _propose_pparams_update(
-                name_template=f"{temp_template}_net_nocc", proposals=network_g_proposals
-            )
-            conway_common.cast_vote(
-                cluster_obj=cluster,
-                governance_data=governance_data,
-                name_template=f"{temp_template}_net_nocc",
-                payment_addr=pool_user_lg.payment,
-                action_txid=net_nocc_prop_rec.action_txid,
-                action_ix=net_nocc_prop_rec.action_ix,
-                approve_cc=False,
-                approve_drep=None if is_in_bootstrap else True,
-                approve_spo=None
-                if net_nocc_prop_rec.proposal_names.isdisjoint(SECURITY_PPARAMS)
-                else True,
-            )
+            # Vote on update proposals from network group that will NOT get approved by CC
+            if configuration.HAS_CC:
+                reqc.cip062_02.start(url=helpers.get_vcs_link())
+                
+                net_nocc_prop_rec = _propose_pparams_update(
+                    name_template=f"{temp_template}_net_nocc", proposals=network_g_proposals
+                )
+                conway_common.cast_vote(
+                    cluster_obj=cluster,
+                    governance_data=governance_data,
+                    name_template=f"{temp_template}_net_nocc",
+                    payment_addr=pool_users_lg[0].payment,
+                    action_txid=net_nocc_prop_rec.action_txid,
+                    action_ix=net_nocc_prop_rec.action_ix,
+                    approve_cc=False,
+                    approve_drep=None if is_in_bootstrap else True,
+                    approve_spo=None
+                    if net_nocc_prop_rec.proposal_names.isdisjoint(SECURITY_PPARAMS)
+                    else True,
+                )
 
-        # Vote on update proposals from economic group that will NOT get approved by DReps
-        if not is_in_bootstrap:
-            eco_nodrep_update_proposals = list(helpers.flatten(economic_g_proposals))
-            eco_nodrep_prop_rec = _propose_pparams_update(
-                name_template=f"{temp_template}_eco_nodrep", proposals=eco_nodrep_update_proposals
+            # Vote on update proposals from economic group that will NOT get approved by DReps
+            if not is_in_bootstrap:
+                eco_nodrep_update_proposals = list(helpers.flatten(economic_g_proposals))
+                eco_nodrep_prop_rec = _propose_pparams_update(
+                    name_template=f"{temp_template}_eco_nodrep", proposals=eco_nodrep_update_proposals
+                )
+                _check_proposed_pparams(
+                    update_proposals=eco_nodrep_prop_rec.proposals,
+                    protocol_params=eco_nodrep_prop_rec.future_pparams,
+                )
+                conway_common.cast_vote(
+                    cluster_obj=cluster,
+                    governance_data=governance_data,
+                    name_template=f"{temp_template}_eco_nodrep",
+                    payment_addr=pool_users_lg[0].payment,
+                    action_txid=eco_nodrep_prop_rec.action_txid,
+                    action_ix=eco_nodrep_prop_rec.action_ix,
+                    approve_cc=True,
+                    approve_drep=False,
+                    approve_spo=None
+                    if eco_nodrep_prop_rec.proposal_names.isdisjoint(SECURITY_PPARAMS)
+                    else True,
+                )
+
+            # Vote on update proposals from economic group that will NOT get approved by CC
+            if configuration.HAS_CC:
+                eco_nocc_update_proposals = list(helpers.flatten(economic_g_proposals))
+                eco_nocc_prop_rec = _propose_pparams_update(
+                    name_template=f"{temp_template}_eco_nocc", proposals=eco_nocc_update_proposals
+                )
+                conway_common.cast_vote(
+                    cluster_obj=cluster,
+                    governance_data=governance_data,
+                    name_template=f"{temp_template}_eco_nocc",
+                    payment_addr=pool_users_lg[0].payment,
+                    action_txid=eco_nocc_prop_rec.action_txid,
+                    action_ix=eco_nocc_prop_rec.action_ix,
+                    approve_cc=False,
+                    approve_drep=None if is_in_bootstrap else True,
+                    approve_spo=None
+                    if eco_nocc_prop_rec.proposal_names.isdisjoint(SECURITY_PPARAMS)
+                    else True,
+                )
+            
+            # Vote on update proposals from technical group that will NOT get approved by DReps
+            tech_nodrep_prop_rec = _propose_pparams_update(
+                name_template=f"{temp_template}_fin_with_spos", proposals=technical_g_proposals
             )
             _check_proposed_pparams(
-                update_proposals=eco_nodrep_prop_rec.proposals,
-                protocol_params=eco_nodrep_prop_rec.future_pparams,
+                update_proposals=tech_nodrep_prop_rec.proposals,
+                protocol_params=tech_nodrep_prop_rec.future_pparams,
+            )
+
+            assert tech_nodrep_prop_rec.proposal_names.isdisjoint(
+                SECURITY_PPARAMS
+            ), "There are security pparams being changed"
+
+            # Check that SPOs cannot vote on change of constitution action if no security params
+            # are being changed.
+            with pytest.raises(clusterlib.CLIError) as excinfo:
+                conway_common.cast_vote(
+                    cluster_obj=cluster,
+                    governance_data=governance_data,
+                    name_template=f"{temp_template}_fin_with_spos",
+                    payment_addr=pool_users_lg[0].payment,
+                    action_txid=tech_nodrep_prop_rec.action_txid,
+                    action_ix=tech_nodrep_prop_rec.action_ix,
+                    approve_cc=False,
+                    approve_drep=None if is_in_bootstrap else False,
+                    approve_spo=True,
+                )
+            err_str = str(excinfo.value)
+            assert "StakePoolVoter" in err_str, err_str
+
+            _url = helpers.get_vcs_link()
+            reqc.cip065.start(url=_url)
+            if is_drep_total_below_threshold:
+                reqc.cip064_03.start(url=_url)
+
+            if not is_in_bootstrap:
+                conway_common.cast_vote(
+                    cluster_obj=cluster,
+                    governance_data=governance_data,
+                    name_template=f"{temp_template}_tech_nodrep",
+                    payment_addr=pool_users_lg[0].payment,
+                    action_txid=tech_nodrep_prop_rec.action_txid,
+                    action_ix=tech_nodrep_prop_rec.action_ix,
+                    approve_cc=True,
+                    approve_drep=None,
+            )
+
+            # Vote on update proposals from technical group that will NOT get approved by CC
+            if configuration.HAS_CC:
+                tech_nocc_prop_rec = _propose_pparams_update(
+                    name_template=f"{temp_template}_tech_nocc", proposals=technical_g_proposals
+                )
+                conway_common.cast_vote(
+                    cluster_obj=cluster,
+                    governance_data=governance_data,
+                    name_template=f"{temp_template}_tech_nocc",
+                    payment_addr=pool_users_lg[0].payment,
+                    action_txid=tech_nocc_prop_rec.action_txid,
+                    action_ix=tech_nocc_prop_rec.action_ix,
+                    approve_cc=None,
+                    approve_drep=None if is_in_bootstrap else True,
+                    approve_spo=None
+                    if tech_nocc_prop_rec.proposal_names.isdisjoint(SECURITY_PPARAMS)
+                    else True,
+                )
+
+            # Vote on update proposals from security params that will NOT get votes from SPOs
+            _url = helpers.get_vcs_link()
+            reqc.cip074.start(url=_url)
+            if is_spo_total_below_threshold:
+                reqc.cip064_04.start(url=_url)
+            
+            sec_nonespo_prop_rec = _propose_pparams_update(
+                name_template=f"{temp_template}_sec_nonespo", proposals=security_proposals
+            )
+            _check_proposed_pparams(
+                update_proposals=sec_nonespo_prop_rec.proposals,
+                protocol_params=sec_nonespo_prop_rec.future_pparams,
             )
             conway_common.cast_vote(
                 cluster_obj=cluster,
                 governance_data=governance_data,
-                name_template=f"{temp_template}_eco_nodrep",
-                payment_addr=pool_user_lg.payment,
-                action_txid=eco_nodrep_prop_rec.action_txid,
-                action_ix=eco_nodrep_prop_rec.action_ix,
+                name_template=f"{temp_template}_sec_nonespo",
+                payment_addr=pool_users_lg[0].payment,
+                action_txid=sec_nonespo_prop_rec.action_txid,
+                action_ix=sec_nonespo_prop_rec.action_ix,
                 approve_cc=True,
-                approve_drep=False,
-                approve_spo=None
-                if eco_nodrep_prop_rec.proposal_names.isdisjoint(SECURITY_PPARAMS)
-                else True,
-            )
-
-        # Vote on update proposals from economic group that will NOT get approved by CC
-        if configuration.HAS_CC:
-            eco_nocc_update_proposals = list(helpers.flatten(economic_g_proposals))
-            eco_nocc_prop_rec = _propose_pparams_update(
-                name_template=f"{temp_template}_eco_nocc", proposals=eco_nocc_update_proposals
-            )
-            conway_common.cast_vote(
-                cluster_obj=cluster,
-                governance_data=governance_data,
-                name_template=f"{temp_template}_eco_nocc",
-                payment_addr=pool_user_lg.payment,
-                action_txid=eco_nocc_prop_rec.action_txid,
-                action_ix=eco_nocc_prop_rec.action_ix,
-                approve_cc=False,
                 approve_drep=None if is_in_bootstrap else True,
-                approve_spo=None
-                if eco_nocc_prop_rec.proposal_names.isdisjoint(SECURITY_PPARAMS)
-                else True,
+                approve_spo=None,
             )
 
-        # Vote on update proposals from technical group that will NOT get approved by DReps
-        tech_nodrep_prop_rec = _propose_pparams_update(
-            name_template=f"{temp_template}_fin_with_spos", proposals=technical_g_proposals
-        )
-        _check_proposed_pparams(
-            update_proposals=tech_nodrep_prop_rec.proposals,
-            protocol_params=tech_nodrep_prop_rec.future_pparams,
-        )
-
-        assert tech_nodrep_prop_rec.proposal_names.isdisjoint(
-            SECURITY_PPARAMS
-        ), "There are security pparams being changed"
-
-        # Check that SPOs cannot vote on change of constitution action if no security params
-        # are being changed.
-        with pytest.raises(clusterlib.CLIError) as excinfo:
+            # Vote on update proposals from security params that will NOT get approved by SPOs
+            reqc.cip061_02.start(url=helpers.get_vcs_link())
+            sec_nospo_prop_rec = _propose_pparams_update(
+                name_template=f"{temp_template}_sec_nospo", proposals=security_proposals
+            )
             conway_common.cast_vote(
                 cluster_obj=cluster,
                 governance_data=governance_data,
-                name_template=f"{temp_template}_fin_with_spos",
-                payment_addr=pool_user_lg.payment,
-                action_txid=tech_nodrep_prop_rec.action_txid,
-                action_ix=tech_nodrep_prop_rec.action_ix,
+                name_template=f"{temp_template}_sec_nospo",
+                payment_addr=pool_users_lg[0].payment,
+                action_txid=sec_nospo_prop_rec.action_txid,
+                action_ix=sec_nospo_prop_rec.action_ix,
+                approve_cc=True,
+                approve_drep=None if is_in_bootstrap else True,
+                approve_spo=False,
+            )
+
+            # Vote on update proposals from governance group that will NOT get approved by DReps
+            if not is_in_bootstrap:
+                gov_nodrep_update_proposals = list(helpers.flatten(governance_g_proposals))
+                
+                gov_nodrep_prop_rec = _propose_pparams_update(
+                    name_template=f"{temp_template}_gov_nodrep", proposals=gov_nodrep_update_proposals
+                )
+                _check_proposed_pparams(
+                    update_proposals=gov_nodrep_prop_rec.proposals,
+                    protocol_params=gov_nodrep_prop_rec.future_pparams,
+                )
+                conway_common.cast_vote(
+                    cluster_obj=cluster,
+                    governance_data=governance_data,
+                    name_template=f"{temp_template}_gov_nodrep",
+                    payment_addr=pool_users_lg[0].payment,
+                    action_txid=gov_nodrep_prop_rec.action_txid,
+                    action_ix=gov_nodrep_prop_rec.action_ix,
+                    approve_cc=True,
+                    approve_drep=False,
+                    approve_spo=None
+                    if gov_nodrep_prop_rec.proposal_names.isdisjoint(SECURITY_PPARAMS)
+                    else True,
+                )
+
+            # Vote on update proposals from governance group that will NOT get approved by CC
+            if configuration.HAS_CC:
+                gov_nocc_update_proposals = list(helpers.flatten(governance_g_proposals))
+                
+                gov_nocc_prop_rec = _propose_pparams_update(
+                    name_template=f"{temp_template}_gov_nocc", proposals=gov_nocc_update_proposals
+                )
+                conway_common.cast_vote(
+                    cluster_obj=cluster,
+                    governance_data=governance_data,
+                    name_template=f"{temp_template}_gov_nocc",
+                    payment_addr=pool_users_lg[0].payment,
+                    action_txid=gov_nocc_prop_rec.action_txid,
+                    action_ix=gov_nocc_prop_rec.action_ix,
+                    approve_cc=False,
+                    approve_drep=None if is_in_bootstrap else True,
+                    approve_spo=None
+                    if gov_nocc_prop_rec.proposal_names.isdisjoint(SECURITY_PPARAMS)
+                    else True,
+                )
+
+            # Vote on update proposals from mix of groups that will NOT get approved by DReps
+            if not is_in_bootstrap:
+                mix_nodrep_update_proposals = list(
+                    helpers.flatten(
+                        [
+                            *random.sample(network_g_proposals, 2),
+                            *random.sample(economic_g_proposals, 2),
+                            *random.sample(technical_g_proposals, 2),
+                            *random.sample(governance_g_proposals, 2),
+                        ]
+                    )
+                )
+                
+                mix_nodrep_prop_rec = _propose_pparams_update(
+                    name_template=f"{temp_template}_mix_nodrep", proposals=mix_nodrep_update_proposals
+                )
+                _check_proposed_pparams(
+                    update_proposals=mix_nodrep_prop_rec.proposals,
+                    protocol_params=mix_nodrep_prop_rec.future_pparams,
+                )
+                conway_common.cast_vote(
+                    cluster_obj=cluster,
+                    governance_data=governance_data,
+                    name_template=f"{temp_template}_mix_nodrep",
+                    payment_addr=pool_users_lg[0].payment,
+                    action_txid=mix_nodrep_prop_rec.action_txid,
+                    action_ix=mix_nodrep_prop_rec.action_ix,
+                    approve_cc=True,
+                    approve_drep=False,
+                    approve_spo=None
+                    if mix_nodrep_prop_rec.proposal_names.isdisjoint(SECURITY_PPARAMS)
+                    else True,
+                )
+
+            # Vote on update proposals from mix of groups that will NOT get approved by CC
+            if configuration.HAS_CC:
+                mix_nocc_update_proposals = list(
+                    helpers.flatten(
+                        [
+                            *random.sample(network_g_proposals, 2),
+                            *random.sample(economic_g_proposals, 2),
+                            *random.sample(technical_g_proposals, 2),
+                            *random.sample(governance_g_proposals, 2),
+                        ]
+                    )
+                )
+                
+                mix_nocc_prop_rec = _propose_pparams_update(
+                    name_template=f"{temp_template}_mix_nocc", proposals=mix_nocc_update_proposals
+                )
+                _check_proposed_pparams(
+                    update_proposals=mix_nocc_prop_rec.proposals,
+                    protocol_params=mix_nocc_prop_rec.future_pparams,
+                )
+                conway_common.cast_vote(
+                    cluster_obj=cluster,
+                    governance_data=governance_data,
+                    name_template=f"{temp_template}_mix_nocc",
+                    payment_addr=pool_users_lg[0].payment,
+                    action_txid=mix_nocc_prop_rec.action_txid,
+                    action_ix=mix_nocc_prop_rec.action_ix,
+                    approve_cc=False,
+                    approve_drep=None if is_in_bootstrap else True,
+                    approve_spo=None
+                    if mix_nocc_prop_rec.proposal_names.isdisjoint(SECURITY_PPARAMS)
+                    else True,
+                )
+
+            # Vote on the "final" action that will be enacted
+            reqc.cip037.start(url=helpers.get_vcs_link())
+
+            fin_prop_rec = _propose_pparams_update(
+                name_template=f"{temp_template}_fin_no", proposals=fin_update_proposals
+            )
+            _check_proposed_pparams(
+                update_proposals=fin_prop_rec.proposals,
+                protocol_params=fin_prop_rec.future_pparams,
+            )
+
+            # Vote & disapprove the action
+            conway_common.cast_vote(
+                cluster_obj=cluster,
+                governance_data=governance_data,
+                name_template=f"{temp_template}_fin_no",
+                payment_addr=pool_users_lg[0].payment,
+                action_txid=fin_prop_rec.action_txid,
+                action_ix=fin_prop_rec.action_ix,
                 approve_cc=False,
                 approve_drep=None if is_in_bootstrap else False,
+                approve_spo=False,
+            )
+
+            # Vote & approve the action
+            if configuration.HAS_CC:
+                reqc.cip062_01.start(url=helpers.get_vcs_link())
+            fin_voted_votes = conway_common.cast_vote(
+                cluster_obj=cluster,
+                governance_data=governance_data,
+                name_template=f"{temp_template}_fin_yes",
+                payment_addr=pool_users_lg[0].payment,
+                action_txid=fin_prop_rec.action_txid,
+                action_ix=fin_prop_rec.action_ix,
+                approve_cc=True,
+                approve_drep=None if is_in_bootstrap else True,
                 approve_spo=True,
             )
-        err_str = str(excinfo.value)
-        assert "StakePoolVoter" in err_str, err_str
+            fin_approve_epoch = cluster.g_query.get_epoch()
 
-        _url = helpers.get_vcs_link()
-        reqc.cip065.start(url=_url)
-        if is_drep_total_below_threshold:
-            reqc.cip064_03.start(url=_url)
-
-        if not is_in_bootstrap:
-            conway_common.cast_vote(
-                cluster_obj=cluster,
-                governance_data=governance_data,
-                name_template=f"{temp_template}_tech_nodrep",
-                payment_addr=pool_user_lg.payment,
-                action_txid=tech_nodrep_prop_rec.action_txid,
-                action_ix=tech_nodrep_prop_rec.action_ix,
-                approve_cc=True,
-                approve_drep=None,
-            )
-
-        # Vote on update proposals from technical group that will NOT get approved by CC
-        if configuration.HAS_CC:
-            tech_nocc_prop_rec = _propose_pparams_update(
-                name_template=f"{temp_template}_tech_nocc", proposals=technical_g_proposals
-            )
-            conway_common.cast_vote(
-                cluster_obj=cluster,
-                governance_data=governance_data,
-                name_template=f"{temp_template}_tech_nocc",
-                payment_addr=pool_user_lg.payment,
-                action_txid=tech_nocc_prop_rec.action_txid,
-                action_ix=tech_nocc_prop_rec.action_ix,
-                approve_cc=None,
-                approve_drep=None if is_in_bootstrap else True,
-                approve_spo=None
-                if tech_nocc_prop_rec.proposal_names.isdisjoint(SECURITY_PPARAMS)
-                else True,
-            )
-
-        # Vote on update proposals from security params that will NOT get votes from SPOs
-        _url = helpers.get_vcs_link()
-        reqc.cip074.start(url=_url)
-        if is_spo_total_below_threshold:
-            reqc.cip064_04.start(url=_url)
-        sec_nonespo_prop_rec = _propose_pparams_update(
-            name_template=f"{temp_template}_sec_nonespo", proposals=security_proposals
-        )
-        _check_proposed_pparams(
-            update_proposals=sec_nonespo_prop_rec.proposals,
-            protocol_params=sec_nonespo_prop_rec.future_pparams,
-        )
-        conway_common.cast_vote(
-            cluster_obj=cluster,
-            governance_data=governance_data,
-            name_template=f"{temp_template}_sec_nonespo",
-            payment_addr=pool_user_lg.payment,
-            action_txid=sec_nonespo_prop_rec.action_txid,
-            action_ix=sec_nonespo_prop_rec.action_ix,
-            approve_cc=True,
-            approve_drep=None if is_in_bootstrap else True,
-            approve_spo=None,
-        )
-
-        # Vote on update proposals from security params that will NOT get approved by SPOs
-        reqc.cip061_02.start(url=helpers.get_vcs_link())
-        sec_nospo_prop_rec = _propose_pparams_update(
-            name_template=f"{temp_template}_sec_nospo", proposals=security_proposals
-        )
-        conway_common.cast_vote(
-            cluster_obj=cluster,
-            governance_data=governance_data,
-            name_template=f"{temp_template}_sec_nospo",
-            payment_addr=pool_user_lg.payment,
-            action_txid=sec_nospo_prop_rec.action_txid,
-            action_ix=sec_nospo_prop_rec.action_ix,
-            approve_cc=True,
-            approve_drep=None if is_in_bootstrap else True,
-            approve_spo=False,
-        )
-
-        # Vote on update proposals from governance group that will NOT get approved by DReps
-        if not is_in_bootstrap:
-            gov_nodrep_update_proposals = list(helpers.flatten(governance_g_proposals))
-            gov_nodrep_prop_rec = _propose_pparams_update(
-                name_template=f"{temp_template}_gov_nodrep", proposals=gov_nodrep_update_proposals
-            )
-            _check_proposed_pparams(
-                update_proposals=gov_nodrep_prop_rec.proposals,
-                protocol_params=gov_nodrep_prop_rec.future_pparams,
-            )
-            conway_common.cast_vote(
-                cluster_obj=cluster,
-                governance_data=governance_data,
-                name_template=f"{temp_template}_gov_nodrep",
-                payment_addr=pool_user_lg.payment,
-                action_txid=gov_nodrep_prop_rec.action_txid,
-                action_ix=gov_nodrep_prop_rec.action_ix,
-                approve_cc=True,
-                approve_drep=False,
-                approve_spo=None
-                if gov_nodrep_prop_rec.proposal_names.isdisjoint(SECURITY_PPARAMS)
-                else True,
-            )
-
-        # Vote on update proposals from governance group that will NOT get approved by CC
-        if configuration.HAS_CC:
-            gov_nocc_update_proposals = list(helpers.flatten(governance_g_proposals))
-            gov_nocc_prop_rec = _propose_pparams_update(
-                name_template=f"{temp_template}_gov_nocc", proposals=gov_nocc_update_proposals
-            )
-            conway_common.cast_vote(
-                cluster_obj=cluster,
-                governance_data=governance_data,
-                name_template=f"{temp_template}_gov_nocc",
-                payment_addr=pool_user_lg.payment,
-                action_txid=gov_nocc_prop_rec.action_txid,
-                action_ix=gov_nocc_prop_rec.action_ix,
-                approve_cc=False,
-                approve_drep=None if is_in_bootstrap else True,
-                approve_spo=None
-                if gov_nocc_prop_rec.proposal_names.isdisjoint(SECURITY_PPARAMS)
-                else True,
-            )
-
-        # Vote on update proposals from mix of groups that will NOT get approved by DReps
-        if not is_in_bootstrap:
-            mix_nodrep_update_proposals = list(
+            # Vote on another update proposals from mix of groups. The proposal will get approved,
+            # but not enacted, because it comes after the "final" action that was accepted to the chain
+            # first.
+            reqc.cip056.start(url=helpers.get_vcs_link())
+            mix_approved_update_proposals = list(
                 helpers.flatten(
                     [
                         *random.sample(network_g_proposals, 2),
-                        *random.sample(economic_g_proposals, 2),
-                        *random.sample(technical_g_proposals, 2),
                         *random.sample(governance_g_proposals, 2),
                     ]
                 )
             )
-            mix_nodrep_prop_rec = _propose_pparams_update(
-                name_template=f"{temp_template}_mix_nodrep", proposals=mix_nodrep_update_proposals
+            
+            mix_approved_prop_rec = _propose_pparams_update(
+                name_template=f"{temp_template}_mix_approved", proposals=mix_approved_update_proposals
             )
             _check_proposed_pparams(
-                update_proposals=mix_nodrep_prop_rec.proposals,
-                protocol_params=mix_nodrep_prop_rec.future_pparams,
-            )
-            conway_common.cast_vote(
-                cluster_obj=cluster,
-                governance_data=governance_data,
-                name_template=f"{temp_template}_mix_nodrep",
-                payment_addr=pool_user_lg.payment,
-                action_txid=mix_nodrep_prop_rec.action_txid,
-                action_ix=mix_nodrep_prop_rec.action_ix,
-                approve_cc=True,
-                approve_drep=False,
-                approve_spo=None
-                if mix_nodrep_prop_rec.proposal_names.isdisjoint(SECURITY_PPARAMS)
-                else True,
+                update_proposals=mix_approved_prop_rec.proposals,
+                protocol_params=mix_approved_prop_rec.future_pparams,
             )
 
-        # Vote on update proposals from mix of groups that will NOT get approved by CC
-        if configuration.HAS_CC:
-            mix_nocc_update_proposals = list(
-                helpers.flatten(
-                    [
-                        *random.sample(network_g_proposals, 2),
-                        *random.sample(economic_g_proposals, 2),
-                        *random.sample(technical_g_proposals, 2),
-                        *random.sample(governance_g_proposals, 2),
-                    ]
-                )
-            )
-            mix_nocc_prop_rec = _propose_pparams_update(
-                name_template=f"{temp_template}_mix_nocc", proposals=mix_nocc_update_proposals
-            )
-            _check_proposed_pparams(
-                update_proposals=mix_nocc_prop_rec.proposals,
-                protocol_params=mix_nocc_prop_rec.future_pparams,
-            )
             conway_common.cast_vote(
                 cluster_obj=cluster,
                 governance_data=governance_data,
-                name_template=f"{temp_template}_mix_nocc",
-                payment_addr=pool_user_lg.payment,
-                action_txid=mix_nocc_prop_rec.action_txid,
-                action_ix=mix_nocc_prop_rec.action_ix,
-                approve_cc=False,
+                name_template=f"{temp_template}_mix_approved",
+                payment_addr=pool_users_lg[0].payment,
+                action_txid=mix_approved_prop_rec.action_txid,
+                action_ix=mix_approved_prop_rec.action_ix,
+                approve_cc=True,
                 approve_drep=None if is_in_bootstrap else True,
                 approve_spo=None
-                if mix_nocc_prop_rec.proposal_names.isdisjoint(SECURITY_PPARAMS)
+                if mix_approved_prop_rec.proposal_names.isdisjoint(SECURITY_PPARAMS)
                 else True,
             )
 
-        # Vote on the "final" action that will be enacted
-        reqc.cip037.start(url=helpers.get_vcs_link())
-        fin_prop_rec = _propose_pparams_update(
-            name_template=f"{temp_template}_fin_no", proposals=fin_update_proposals
-        )
-        _check_proposed_pparams(
-            update_proposals=fin_prop_rec.proposals,
-            protocol_params=fin_prop_rec.future_pparams,
-        )
+            def _check_state(state: dict):
+                pparams = state.get("curPParams") or state.get("currentPParams") or {}
+                clusterlib_utils.check_updated_params(
+                    update_proposals=fin_update_proposals, protocol_params=pparams
+                )
 
-        # Vote & disapprove the action
-        conway_common.cast_vote(
-            cluster_obj=cluster,
-            governance_data=governance_data,
-            name_template=f"{temp_template}_fin_no",
-            payment_addr=pool_user_lg.payment,
-            action_txid=fin_prop_rec.action_txid,
-            action_ix=fin_prop_rec.action_ix,
-            approve_cc=False,
-            approve_drep=None if is_in_bootstrap else False,
-            approve_spo=False,
-        )
+            # Check ratification
+            reqc.cip068.start(url=helpers.get_vcs_link())
+            _cur_epoch = cluster.g_query.get_epoch()
+            if _cur_epoch == fin_approve_epoch:
+                _cur_epoch = cluster.wait_for_new_epoch(padding_seconds=5)
 
-        # Vote & approve the action
-        if configuration.HAS_CC:
-            reqc.cip062_01.start(url=helpers.get_vcs_link())
-        fin_voted_votes = conway_common.cast_vote(
-            cluster_obj=cluster,
-            governance_data=governance_data,
-            name_template=f"{temp_template}_fin_yes",
-            payment_addr=pool_user_lg.payment,
-            action_txid=fin_prop_rec.action_txid,
-            action_ix=fin_prop_rec.action_ix,
-            approve_cc=True,
-            approve_drep=None if is_in_bootstrap else True,
-            approve_spo=True,
-        )
-        fin_approve_epoch = cluster.g_query.get_epoch()
+            if _cur_epoch == fin_approve_epoch + 1:
+                rat_gov_state = cluster.g_conway_governance.query.gov_state()
+                conway_common.save_gov_state(
+                    gov_state=rat_gov_state, name_template=f"{temp_template}_rat_{_cur_epoch}"
+                )
 
-        # Vote on another update proposals from mix of groups. The proposal will get approved,
-        # but not enacted, because it comes after the "final" action that was accepted to the chain
-        # first.
-        reqc.cip056.start(url=helpers.get_vcs_link())
-        mix_approved_update_proposals = list(
-            helpers.flatten(
-                [
-                    *random.sample(network_g_proposals, 2),
-                    *random.sample(governance_g_proposals, 2),
-                ]
-            )
-        )
-        mix_approved_prop_rec = _propose_pparams_update(
-            name_template=f"{temp_template}_mix_approved", proposals=mix_approved_update_proposals
-        )
-        _check_proposed_pparams(
-            update_proposals=mix_approved_prop_rec.proposals,
-            protocol_params=mix_approved_prop_rec.future_pparams,
-        )
-        conway_common.cast_vote(
-            cluster_obj=cluster,
-            governance_data=governance_data,
-            name_template=f"{temp_template}_mix_approved",
-            payment_addr=pool_user_lg.payment,
-            action_txid=mix_approved_prop_rec.action_txid,
-            action_ix=mix_approved_prop_rec.action_ix,
-            approve_cc=True,
-            approve_drep=None if is_in_bootstrap else True,
-            approve_spo=None
-            if mix_approved_prop_rec.proposal_names.isdisjoint(SECURITY_PPARAMS)
-            else True,
-        )
+                rat_action = governance_utils.lookup_ratified_actions(
+                    gov_state=rat_gov_state, action_txid=fin_prop_rec.action_txid
+                )
+                assert rat_action, "Action not found in ratified actions"
 
-        def _check_state(state: dict):
-            pparams = state.get("curPParams") or state.get("currentPParams") or {}
-            clusterlib_utils.check_updated_params(
-                update_proposals=fin_update_proposals, protocol_params=pparams
-            )
+                # Disapprove ratified action, the voting shouldn't have any effect
+                conway_common.cast_vote(
+                    cluster_obj=cluster,
+                    governance_data=governance_data,
+                    name_template=f"{temp_template}_after_ratification",
+                    payment_addr=pool_users_lg[0].payment,
+                    action_txid=fin_prop_rec.action_txid,
+                    action_ix=fin_prop_rec.action_ix,
+                    approve_cc=False,
+                    approve_drep=None if is_in_bootstrap else False,
+                )
 
-        # Check ratification
-        reqc.cip068.start(url=helpers.get_vcs_link())
-        _cur_epoch = cluster.g_query.get_epoch()
-        if _cur_epoch == fin_approve_epoch:
-            _cur_epoch = cluster.wait_for_new_epoch(padding_seconds=5)
+                next_rat_state = rat_gov_state["nextRatifyState"]
+                _check_state(next_rat_state["nextEnactState"])
+                reqc.cip038_04.start(url=helpers.get_vcs_link())
+                assert not next_rat_state["ratificationDelayed"], "Ratification is delayed unexpectedly"
+                reqc.cip038_04.success()
 
-        if _cur_epoch == fin_approve_epoch + 1:
-            rat_gov_state = cluster.g_conway_governance.query.gov_state()
+                # Wait for enactment
+                _cur_epoch = cluster.wait_for_new_epoch(padding_seconds=5)
+
+            # Check enactment
+            assert _cur_epoch == fin_approve_epoch + 2, f"Unexpected epoch {_cur_epoch}"
+            enact_gov_state = cluster.g_conway_governance.query.gov_state()
             conway_common.save_gov_state(
-                gov_state=rat_gov_state, name_template=f"{temp_template}_rat_{_cur_epoch}"
+                gov_state=enact_gov_state, name_template=f"{temp_template}_enact_{_cur_epoch}"
             )
+            _check_state(enact_gov_state)
+            [
+                r.success()
+                for r in (
+                    reqc.cip037,
+                    reqc.cip044,
+                    reqc.cip045,
+                    reqc.cip046,
+                    reqc.cip047,
+                    reqc.cip049,
+                    reqc.cip050,
+                    reqc.cip051,
+                    reqc.cip052,
+                    reqc.cip056,
+                    reqc.cip060,
+                    reqc.cip061_02,
+                    reqc.cip061_04,
+                    reqc.cip065,
+                    reqc.cip068,
+                    reqc.cip074,
+                )
+            ]
+            if configuration.HAS_CC:
+                reqc.cip006.success()
+                reqc.cip062_01.success()
+                reqc.cip062_02.success()
+            if is_drep_total_below_threshold:
+                reqc.cip064_03.success()
+            if is_spo_total_below_threshold:
+                reqc.cip064_04.success()
 
-            rat_action = governance_utils.lookup_ratified_actions(
-                gov_state=rat_gov_state, action_txid=fin_prop_rec.action_txid
-            )
-            assert rat_action, "Action not found in ratified actions"
+            if proposed_pparams_errors:
+                proposed_pparams_errors_str = "\n".join(proposed_pparams_errors)
+                raise AssertionError(proposed_pparams_errors_str)
 
-            # Disapprove ratified action, the voting shouldn't have any effect
-            conway_common.cast_vote(
-                cluster_obj=cluster,
-                governance_data=governance_data,
-                name_template=f"{temp_template}_after_ratification",
-                payment_addr=pool_user_lg.payment,
-                action_txid=fin_prop_rec.action_txid,
-                action_ix=fin_prop_rec.action_ix,
-                approve_cc=False,
-                approve_drep=None if is_in_bootstrap else False,
-            )
-
-            next_rat_state = rat_gov_state["nextRatifyState"]
-            _check_state(next_rat_state["nextEnactState"])
-            reqc.cip038_04.start(url=helpers.get_vcs_link())
-            assert not next_rat_state["ratificationDelayed"], "Ratification is delayed unexpectedly"
-            reqc.cip038_04.success()
-
-            # Wait for enactment
-            _cur_epoch = cluster.wait_for_new_epoch(padding_seconds=5)
-
-        # Check enactment
-        assert _cur_epoch == fin_approve_epoch + 2, f"Unexpected epoch {_cur_epoch}"
-        enact_gov_state = cluster.g_conway_governance.query.gov_state()
-        conway_common.save_gov_state(
-            gov_state=enact_gov_state, name_template=f"{temp_template}_enact_{_cur_epoch}"
-        )
-        _check_state(enact_gov_state)
-        [
-            r.success()
-            for r in (
-                reqc.cip037,
-                reqc.cip044,
-                reqc.cip045,
-                reqc.cip046,
-                reqc.cip047,
-                reqc.cip049,
-                reqc.cip050,
-                reqc.cip051,
-                reqc.cip052,
-                reqc.cip056,
-                reqc.cip060,
-                reqc.cip061_02,
-                reqc.cip061_04,
-                reqc.cip065,
-                reqc.cip068,
-                reqc.cip074,
-            )
-        ]
-        if configuration.HAS_CC:
-            reqc.cip006.success()
-            reqc.cip062_01.success()
-            reqc.cip062_02.success()
-        if is_drep_total_below_threshold:
-            reqc.cip064_03.success()
-        if is_spo_total_below_threshold:
-            reqc.cip064_04.success()
-
-        if proposed_pparams_errors:
-            proposed_pparams_errors_str = "\n".join(proposed_pparams_errors)
-            raise AssertionError(proposed_pparams_errors_str)
-
-        # Try to vote on enacted action
-        with pytest.raises(clusterlib.CLIError) as excinfo:
-            conway_common.cast_vote(
-                cluster_obj=cluster,
-                governance_data=governance_data,
-                name_template=f"{temp_template}_enacted",
-                payment_addr=pool_user_lg.payment,
-                action_txid=fin_prop_rec.action_txid,
-                action_ix=fin_prop_rec.action_ix,
-                approve_cc=False,
-                approve_drep=None if is_in_bootstrap else False,
-            )
-        err_str = str(excinfo.value)
-        assert "(GovActionsDoNotExist" in err_str, err_str
-
-        # Check vote view
-        if fin_voted_votes.cc:
-            governance_utils.check_vote_view(cluster_obj=cluster, vote_data=fin_voted_votes.cc[0])
-        if fin_voted_votes.drep:
-            governance_utils.check_vote_view(cluster_obj=cluster, vote_data=fin_voted_votes.drep[0])
+            # Try to vote on enacted action
+            with pytest.raises(clusterlib.CLIError) as excinfo:
+                conway_common.cast_vote(
+                    cluster_obj=cluster,
+                    governance_data=governance_data,
+                    name_template=f"{temp_template}_enacted",
+                    payment_addr=pool_users_lg[0].payment,
+                    action_txid=fin_prop_rec.action_txid,
+                    action_ix=fin_prop_rec.action_ix,
+                    approve_cc=False,
+                    approve_drep=None if is_in_bootstrap else False,
+                )
+            err_str = str(excinfo.value)
+            assert "(GovActionsDoNotExist" in err_str, err_str
+            # Check vote view
+            if fin_voted_votes.cc:
+                governance_utils.check_vote_view(cluster_obj=cluster, vote_data=fin_voted_votes.cc[0])
+            if fin_voted_votes.drep:
+                governance_utils.check_vote_view(cluster_obj=cluster, vote_data=fin_voted_votes.drep[0])
+        except clusterlib.CLIError as exc:
+                err_str = str(exc)
+                if "MaxTxSizeUTxO" in err_str:
+                    print(f"Fails at proposing {(num_pool_users)} parameter updates actions in a single transaction")
+                    return
 
 
 class TestPParamData:

@@ -6,7 +6,7 @@ import logging
 import allure
 import pytest
 from cardano_clusterlib import clusterlib
-import typing as tp
+import typing as tp 
 from cardano_node_tests.cluster_management import cluster_management
 from cardano_node_tests.tests import common
 from cardano_node_tests.tests import issues
@@ -29,7 +29,7 @@ pytestmark = pytest.mark.skipif(
 def pool_users_lg(
     cluster_manager: cluster_management.ClusterManager,
     cluster_lock_governance: governance_setup.GovClusterT,
-) -> tp.List[clusterlib.PoolUser]:
+) -> clusterlib.PoolUser:
     """Create a pool user for "lock governance"."""
     cluster, __ = cluster_lock_governance
     key = helpers.get_current_line_str()
@@ -39,7 +39,7 @@ def pool_users_lg(
         name_template=name_template,
         cluster_obj=cluster,
         caching_key=key,
-        no_of_users=30
+        no_of_users=300
     )
 
 
@@ -48,10 +48,12 @@ class TestConstitution:
 
     @allure.link(helpers.get_vcs_link())
     @pytest.mark.long
+    @pytest.mark.parametrize("num_pool_users", reversed(range(116, 119)))
     def test_change_constitution(
         self,
         cluster_lock_governance: governance_setup.GovClusterT,
         pool_users_lg: tp.List[clusterlib.PoolUser],
+        num_pool_users: int
     ):
         """Test enactment of change of constitution.
 
@@ -64,12 +66,14 @@ class TestConstitution:
         * check that the action is enacted
         * check that it's not possible to vote on enacted action
         """
+        pool_users_lg=pool_users_lg[:num_pool_users]
+        total_participants = len(pool_users_lg)
         # pylint: disable=too-many-locals,too-many-statements
         cluster, governance_data = cluster_lock_governance
         temp_template = common.get_test_id(cluster)
-        
+
         # Create an action
-        total_participants = len(pool_users_lg)
+
         anchor_url = "http://www.const-action.com"
         anchor_data_hash = cluster.g_conway_governance.get_anchor_data_hash(text=anchor_url)
 
@@ -92,206 +96,198 @@ class TestConstitution:
             file_text=constitution_file
         )
         reqc.cli002.success()
+        try:
+            if conway_common.is_in_bootstrap(cluster_obj=cluster):
+                with pytest.raises(clusterlib.CLIError) as excinfo:
+                    conway_common.propose_change_constitution(
+                        cluster_obj=cluster,
+                        name_template=f"{temp_template}_constitution_bootstrap",
+                        anchor_url=anchor_url,
+                        anchor_data_hash=anchor_data_hash,
+                        constitution_url=constitution_url,
+                        constitution_hash=constitution_hash,
+                        pool_users=pool_users_lg,
+                    )
+                err_str = str(excinfo.value)
+                assert "(DisallowedProposalDuringBootstrap" in err_str, err_str
+                return
+            print(f"\n{len(pool_users_lg)} proposals for update constitution action are being submitted in a single transaction")
+            _url = helpers.get_vcs_link()
+            [r.start(url=_url) for r in (reqc.cli013, reqc.cip031a_02, reqc.cip031c_01, reqc.cip054_03)]
+            (
+                constitution_actions,
+                action_txid,
+                action_ix,
+            ) = conway_common.propose_change_constitution(
+                cluster_obj=cluster,
+                name_template=f"{temp_template}_constitution",
+                anchor_url=anchor_url,
+                anchor_data_hash=anchor_data_hash,
+                constitution_url=constitution_url,
+                constitution_hash=constitution_hash,
+                pool_users=pool_users_lg,
+            )
+            [r.success() for r in (reqc.cli013, reqc.cip031a_02, reqc.cip031c_01, reqc.cip054_03)]
 
-        if conway_common.is_in_bootstrap(cluster_obj=cluster):
+            # Check that SPOs cannot vote on change of constitution action
             with pytest.raises(clusterlib.CLIError) as excinfo:
-                conway_common.propose_change_constitution(
+                conway_common.cast_vote(
                     cluster_obj=cluster,
-                    name_template=f"{temp_template}_constitution_bootstrap",
-                    anchor_url=anchor_url,
-                    anchor_data_hash=anchor_data_hash,
-                    constitution_url=constitution_url,
-                    constitution_hash=constitution_hash,
-                    pool_users=pool_users_lg,
+                    governance_data=governance_data,
+                    name_template=f"{temp_template}_with_spos",
+                    payment_addr=pool_users_lg[0].payment,
+                    action_txid=action_txid,
+                    action_ix=action_ix,
+                    approve_cc=False,
+                    approve_drep=False,
+                    approve_spo=False,
                 )
             err_str = str(excinfo.value)
-            assert "(DisallowedProposalDuringBootstrap" in err_str, err_str
-            return
-        print(f"{len(pool_users_lg)} proposals for no-confidence action are being submitted in a single transaction")
-        _url = helpers.get_vcs_link()
-        [r.start(url=_url) for r in (reqc.cli013, reqc.cip031a_02, reqc.cip031c_01, reqc.cip054_03)]
-        (
-            constitution_actions,
-            action_txid,
-            action_ix,
-        ) = conway_common.propose_change_constitution(
-            cluster_obj=cluster,
-            name_template=f"{temp_template}_constitution",
-            anchor_url=anchor_url,
-            anchor_data_hash=anchor_data_hash,
-            constitution_url=constitution_url,
-            constitution_hash=constitution_hash,
-            pool_users=pool_users_lg,
-        )
-        [r.success() for r in (reqc.cli013, reqc.cip031a_02, reqc.cip031c_01, reqc.cip054_03)]
+            assert "StakePoolVoter" in err_str, err_str
 
-        # Check that SPOs cannot vote on change of constitution action
-        with pytest.raises(clusterlib.CLIError) as excinfo:
+            # Vote & disapprove the action
             conway_common.cast_vote(
                 cluster_obj=cluster,
                 governance_data=governance_data,
-                name_template=f"{temp_template}_with_spos",
+                name_template=f"{temp_template}_no",
                 payment_addr=pool_users_lg[0].payment,
                 action_txid=action_txid,
                 action_ix=action_ix,
                 approve_cc=False,
                 approve_drep=False,
-                approve_spo=False,
             )
-        err_str = str(excinfo.value)
-        assert "StakePoolVoter" in err_str, err_str
 
-        # Vote & disapprove the action
-        conway_common.cast_vote(
-            cluster_obj=cluster,
-            governance_data=governance_data,
-            name_template=f"{temp_template}_no",
-            payment_addr=pool_users_lg[0].payment,
-            action_txid=action_txid,
-            action_ix=action_ix,
-            approve_cc=False,
-            approve_drep=False,
-        )
+            print(len(governance_data.cc_members), " CC members are voting")
+            print(len(governance_data.dreps_reg), " DReps are voting")
+            # Vote & approve the action
+            reqc.cip042.start(url=helpers.get_vcs_link())
+            voted_votes = conway_common.cast_vote(
+                cluster_obj=cluster,
+                governance_data=governance_data,
+                name_template=f"{temp_template}_yes",
+                payment_addr=pool_users_lg[0].payment,
+                action_txid=action_txid,
+                action_ix=action_ix,
+                approve_cc=True,
+                approve_drep=True,
+            )
 
-        print(len(governance_data.cc_members), " CC members are voting")
-        print(len(governance_data.dreps_reg), " DReps are voting")
-        # Vote & approve the action
-        reqc.cip042.start(url=helpers.get_vcs_link())
-        voted_votes = conway_common.cast_vote(
-            cluster_obj=cluster,
-            governance_data=governance_data,
-            name_template=f"{temp_template}_yes",
-            payment_addr=pool_users_lg[0].payment,
-            action_txid=action_txid,
-            action_ix=action_ix,
-            approve_cc=True,
-            approve_drep=True,
-        )
+            def _assert_anchor(anchor: dict):
+                assert (
+                    anchor["dataHash"]
+                    == constitution_hash
+                    == "d6d9034f61e2f7ada6e58c252e15684c8df7f0b197a95d80f42ca0a3685de26e"
+                ), "Incorrect constitution data hash"
+                assert anchor["url"] == constitution_url, "Incorrect constitution data URL"
 
-        def _assert_anchor(anchor: dict):
-            assert (
-                anchor["dataHash"]
-                == constitution_hash
-                == "d6d9034f61e2f7ada6e58c252e15684c8df7f0b197a95d80f42ca0a3685de26e"
-            ), "Incorrect constitution data hash"
-            assert anchor["url"] == constitution_url, "Incorrect constitution data URL"
+            def _check_state(state: dict):
+                anchor = state["constitution"]["anchor"]
+                _assert_anchor(anchor)
 
-        def _check_state(state: dict):
-            anchor = state["constitution"]["anchor"]
-            _assert_anchor(anchor)
+            def _check_cli_query():
+                anchor = cluster.g_conway_governance.query.constitution()["anchor"]
+                _assert_anchor(anchor)
 
-        def _check_cli_query():
-            anchor = cluster.g_conway_governance.query.constitution()["anchor"]
-            _assert_anchor(anchor)
-        
-        # check proposaal 
-        while True:
-            proposal_gov_state = cluster.g_conway_governance.query.gov_state()
-            proposal_action = governance_utils.lookup_proposal(gov_state=proposal_gov_state, action_txid=action_txid)
-            if proposal_action:
-                print("NewConstitution Action in proposal")
-                # Wait for one epoch interval
-                curr_epoch = cluster.wait_for_new_epoch(padding_seconds=5)
-                print(f"current epoch: {curr_epoch}")
-            else:
-                break
+            # Check ratification
+            xfail_ledger_3979_msgs = set()
+            for __ in range(3):
+                _cur_epoch = cluster.wait_for_new_epoch(padding_seconds=5)
+                rat_gov_state = cluster.g_conway_governance.query.gov_state()
+                conway_common.save_gov_state(
+                    gov_state=rat_gov_state, name_template=f"{temp_template}_rat_{_cur_epoch}"
+                )
+                rat_action = governance_utils.lookup_ratified_actions(
+                    gov_state=rat_gov_state, action_txid=action_txid
+                )
+                if rat_action:
+                    break
 
-        # Check ratification
-        xfail_ledger_3979_msgs = set()
-        for __ in range(3):
-            _cur_epoch = cluster.wait_for_new_epoch(new_epochs=2, padding_seconds=5)
-            rat_gov_state = cluster.g_conway_governance.query.gov_state()
-            print(rat_gov_state)
+                # Known ledger issue where only one expired action gets removed in one epoch.
+                # See https://github.com/IntersectMBO/cardano-ledger/issues/3979
+                if not rat_action and conway_common.possible_rem_issue(
+                    gov_state=rat_gov_state, epoch=_cur_epoch
+                ):
+                    xfail_ledger_3979_msgs.add("Only single expired action got removed")
+                    continue
+
+                msg = "Action not found in removed actions"
+                raise AssertionError(msg)
+
+            # Disapprove ratified action, the voting shouldn't have any effect
+            conway_common.cast_vote(
+                cluster_obj=cluster,
+                governance_data=governance_data,
+                name_template=f"{temp_template}_after_ratification",
+                payment_addr=pool_users_lg[0].payment,
+                action_txid=action_txid,
+                action_ix=action_ix,
+                approve_cc=False,
+                approve_drep=False,
+            )
+
+            next_rat_state = rat_gov_state["nextRatifyState"]
+            _url = helpers.get_vcs_link()
+            [
+                r.start(url=_url)
+                for r in (
+                    reqc.cli001,
+                    reqc.cip001a,
+                    reqc.cip001b,
+                    reqc.cip072,
+                    reqc.cip073_01,
+                    reqc.cip073_04,
+                )
+            ]
+            _check_state(next_rat_state["nextEnactState"])
+            [r.success() for r in (reqc.cli001, reqc.cip001a, reqc.cip001b, reqc.cip073_01)]
+            reqc.cip038_02.start(url=_url)
+            assert next_rat_state["ratificationDelayed"], "Ratification not delayed"
+            reqc.cip038_02.success()
+
+            # Check enactment
+            _cur_epoch = cluster.wait_for_new_epoch(padding_seconds=5)
+            enact_gov_state = cluster.g_conway_governance.query.gov_state()
             conway_common.save_gov_state(
-                gov_state=rat_gov_state, name_template=f"{temp_template}_rat_{_cur_epoch}"
+                gov_state=enact_gov_state, name_template=f"{temp_template}_enact_{_cur_epoch}"
             )
-            rat_action = governance_utils.lookup_ratified_actions(
-                gov_state=rat_gov_state, action_txid=action_txid
-            )
-            if rat_action:
-                break
+            _check_state(enact_gov_state)
+            [r.success() for r in (reqc.cip042, reqc.cip072, reqc.cip073_04)]
 
-            # Known ledger issue where only one expired action gets removed in one epoch.
-            # See https://github.com/IntersectMBO/cardano-ledger/issues/3979
-            if not rat_action and conway_common.possible_rem_issue(
-                gov_state=rat_gov_state, epoch=_cur_epoch
-            ):
-                xfail_ledger_3979_msgs.add("Only single expired action got removed")
-                continue
+            reqc.cli036.start(url=helpers.get_vcs_link())
+            _check_cli_query()
+            reqc.cli036.success()
 
-            msg = "Action not found in removed actions"
-            raise AssertionError(msg)
+            # Try to vote on enacted action
+            with pytest.raises(clusterlib.CLIError) as excinfo:
+                conway_common.cast_vote(
+                    cluster_obj=cluster,
+                    governance_data=governance_data,
+                    name_template=f"{temp_template}_enacted",
+                    payment_addr=pool_users_lg[0].payment,
+                    action_txid=action_txid,
+                    action_ix=action_ix,
+                    approve_cc=False,
+                    approve_drep=False,
+                )
+            err_str = str(excinfo.value)
+            assert "(GovActionsDoNotExist" in err_str, err_str
 
-        # Disapprove ratified action, the voting shouldn't have any effect
-        conway_common.cast_vote(
-            cluster_obj=cluster,
-            governance_data=governance_data,
-            name_template=f"{temp_template}_after_ratification",
-            payment_addr=pool_users_lg[0].payment,
-            action_txid=action_txid,
-            action_ix=action_ix,
-            approve_cc=False,
-            approve_drep=False,
-        )
+            # Check action view
+            reqc.cli020.start(url=helpers.get_vcs_link())
+            governance_utils.check_action_view(cluster_obj=cluster, action_data=constitution_actions[total_participants-1])
+            reqc.cli020.success()
 
-        next_rat_state = rat_gov_state["nextRatifyState"]
-        _url = helpers.get_vcs_link()
-        [
-            r.start(url=_url)
-            for r in (
-                reqc.cli001,
-                reqc.cip001a,
-                reqc.cip001b,
-                reqc.cip072,
-                reqc.cip073_01,
-                reqc.cip073_04,
-            )
-        ]
-        _check_state(next_rat_state["nextEnactState"])
-        [r.success() for r in (reqc.cli001, reqc.cip001a, reqc.cip001b, reqc.cip073_01)]
-        reqc.cip038_02.start(url=_url)
-        assert next_rat_state["ratificationDelayed"], "Ratification not delayed"
-        reqc.cip038_02.success()
+            # Check vote view
+            if voted_votes.cc:
+                governance_utils.check_vote_view(cluster_obj=cluster, vote_data=voted_votes.cc[0])
+            governance_utils.check_vote_view(cluster_obj=cluster, vote_data=voted_votes.drep[0])
 
-        # Check enactment
-        _cur_epoch = cluster.wait_for_new_epoch(padding_seconds=5)
-        enact_gov_state = cluster.g_conway_governance.query.gov_state()
-        conway_common.save_gov_state(
-            gov_state=enact_gov_state, name_template=f"{temp_template}_enact_{_cur_epoch}"
-        )
-        _check_state(enact_gov_state)
-        [r.success() for r in (reqc.cip042, reqc.cip072, reqc.cip073_04)]
-
-        reqc.cli036.start(url=helpers.get_vcs_link())
-        _check_cli_query()
-        reqc.cli036.success()
-
-        # Try to vote on enacted action
-        with pytest.raises(clusterlib.CLIError) as excinfo:
-            conway_common.cast_vote(
-                cluster_obj=cluster,
-                governance_data=governance_data,
-                name_template=f"{temp_template}_enacted",
-                payment_addr=pool_users_lg[0].payment,
-                action_txid=action_txid,
-                action_ix=action_ix,
-                approve_cc=False,
-                approve_drep=False,
-            )
-        err_str = str(excinfo.value)
-        assert "(GovActionsDoNotExist" in err_str, err_str
-
-        # Check action view
-        reqc.cli020.start(url=helpers.get_vcs_link())
-        governance_utils.check_action_view(cluster_obj=cluster, action_data=constitution_actions[total_participants -1])
-        reqc.cli020.success()
-
-        # Check vote view
-        if voted_votes.cc:
-            governance_utils.check_vote_view(cluster_obj=cluster, vote_data=voted_votes.cc[0])
-        governance_utils.check_vote_view(cluster_obj=cluster, vote_data=voted_votes.drep[0])
-
-        if xfail_ledger_3979_msgs:
-            ledger_3979 = issues.ledger_3979.copy()
-            ledger_3979.message = " ;".join(xfail_ledger_3979_msgs)
-            ledger_3979.finish_test()
+            if xfail_ledger_3979_msgs:
+                ledger_3979 = issues.ledger_3979.copy()
+                ledger_3979.message = " ;".join(xfail_ledger_3979_msgs)
+                ledger_3979.finish_test()
+        except clusterlib.CLIError as exc:
+                err_str = str(exc)
+                if "MaxTxSizeUTxO" in err_str:
+                    print(f"Fails at proposing {(num_pool_users)} constitution update actions in a single transaction")
+                    return

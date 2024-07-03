@@ -44,17 +44,19 @@ def pool_users_ug(
         name_template=name_template,
         cluster_obj=cluster,
         caching_key=key,
-        no_of_users= 30
+        no_of_users= 300
     )
 
 class TestInfo:
     """Tests for info."""
-
+    @pytest.mark.parametrize("num_pool_users", reversed(range(116, 120)))
     @allure.link(helpers.get_vcs_link())
     def test_info(
         self,
+        cluster_manager: cluster_management.ClusterManager,
         cluster_use_governance: governance_setup.GovClusterT,
         pool_users_ug: clusterlib.PoolUser,
+        num_pool_users: int,
     ):
         """Test voting on info action.
 
@@ -62,29 +64,28 @@ class TestInfo:
         * vote on the action
         * check the votes
         """
-        # pylint: disable=too-many-locals,too-many-statements
+        # pylint: disable=too-many-locals,too-many-statements        
         cluster, governance_data = cluster_use_governance
         temp_template = common.get_test_id(cluster)
         action_deposit_amt = cluster.conway_genesis["govActionDeposit"]
+        
+        pool_users_ug = pool_users_ug[:num_pool_users]
         total_participants = len(pool_users_ug)
+        
         # Create an action
-
-        rand_str = helpers.get_rand_str(4)
-        anchor_url = f"http://www.info-action-{rand_str}.com"
-        anchor_data_hash = "5d372dca1a4cc90d7d16d966c48270e33e3aa0abcb0e78f0d5ca7ff330d2245d"
         _url = helpers.get_vcs_link()
         [r.start(url=_url) for r in (reqc.cli016, reqc.cip031a_03, reqc.cip054_06)]
         info_actions = [
             cluster.g_conway_governance.action.create_info(
                 action_name= temp_template,
                 deposit_amt= action_deposit_amt,
-                anchor_url= anchor_url,
-                anchor_data_hash= anchor_data_hash,
+                anchor_url= f"http://www.info-action-{i}.com",
+                anchor_data_hash= "5d372dca1a4cc90d7d16d966c48270e33e3aa0abcb0e78f0d5ca7ff330d2245d",
                 deposit_return_stake_vkey_file=pool_users_ug[i].stake.vkey_file,
             )
             for i in range(total_participants)
         ]
-        print(f"{len(info_actions)} proposals for info action are being submitted in a single transaction")
+        print(f"\n{len(info_actions)} proposals for info action are being submitted in a single transaction")
         [r.success() for r in (reqc.cli016, reqc.cip031a_03, reqc.cip054_06)]
 
         tx_files_action = clusterlib.TxFiles(
@@ -99,14 +100,22 @@ class TestInfo:
         address_utxos = [cluster.g_query.get_utxo(pool_user_ug.payment.address) for pool_user_ug in pool_users_ug]
         flatenned_utxos = list(chain.from_iterable(address_utxos))
         reqc.cli023.start(url=helpers.get_vcs_link())
-        tx_output_action = clusterlib_utils.build_and_submit_tx(
-            cluster_obj=cluster,
-            name_template=f"{temp_template}_action",
-            src_address=pool_users_ug[0].payment.address,
-            txins= flatenned_utxos,
-            use_build_cmd=True,
-            tx_files=tx_files_action,
-        )
+        
+        try:
+            tx_output_action = clusterlib_utils.build_and_submit_tx(
+                cluster_obj=cluster,
+                name_template=f"{temp_template}_action",
+                src_address=pool_users_ug[0].payment.address,
+                txins=flatenned_utxos,
+                use_build_cmd=True,
+                tx_files=tx_files_action,
+            )
+        except clusterlib.CLIError as exc:
+            err_str = str(exc)
+            if "MaxTxSizeUTxO" in err_str:
+                print(f"Fails at submitting {len(info_actions)} proposals in a single transaction")
+                return
+
         reqc.cli023.success()
 
         out_utxos_action = cluster.g_query.get_utxo(tx_raw_output=tx_output_action)
@@ -137,7 +146,6 @@ class TestInfo:
         ), "Incorrect action tag"
 
         # Vote
-
         action_ix = prop_action["actionId"]["govActionIx"]
 
         _url = helpers.get_vcs_link()
@@ -190,7 +198,7 @@ class TestInfo:
         )
 
         reqc.cli024.start(url=helpers.get_vcs_link())
-        vote_tx_output = conway_common.submit_vote(
+        vote_tx_outputs = conway_common.submit_vote(
             cluster_obj=cluster,
             name_template=temp_template,
             payment_addr=pool_users_ug[0].payment,
@@ -200,7 +208,7 @@ class TestInfo:
         )
         reqc.cli024.success()
 
-        vote_txid = cluster.g_transaction.get_txid(tx_body_file=vote_tx_output.out_file)
+        vote_txids = [cluster.g_transaction.get_txid(tx_body_file=vote_tx_output.out_file) for vote_tx_output in vote_tx_outputs]
 
         vote_gov_state = cluster.g_conway_governance.query.gov_state()
         _cur_epoch = cluster.g_query.get_epoch()
@@ -246,7 +254,10 @@ class TestInfo:
         reqc.cli022.success()
 
         # Check dbsync
-        dbsync_utils.check_votes(
-            votes=governance_utils.VotedVotes(cc=votes_cc, drep=votes_drep, spo=votes_spo),
-            txhash=vote_txid,
-        )
+        for vote_txid in vote_txids:
+            dbsync_utils.check_votes(
+                votes=governance_utils.VotedVotes(cc=votes_cc, drep=votes_drep, spo=votes_spo),
+                txhash=vote_txid,
+            )
+            
+        cluster_manager.set_needs_respin()

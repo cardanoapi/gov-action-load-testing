@@ -4,6 +4,7 @@ import dataclasses
 from itertools import chain
 import json
 import logging
+import math
 import typing as tp
 
 from cardano_clusterlib import clusterlib
@@ -140,46 +141,88 @@ def get_registered_pool_user(
             fixture_cache.value = pool_users
     else:
         pool_users = _create_user()
+    
 
     # Fund the payment address with some ADA
-    for pool_user in pool_users:
+    fund_pool_users(pool_users, cluster_obj, cluster_manager, fund_amount)
+    # Register the stake address
+    register_pool_users(name_template, pool_users, cluster_obj)
+
+    return pool_users
+
+
+def fund_pool_users(
+    pool_users: tp.List[clusterlib.PoolUser],
+    cluster_obj: clusterlib.ClusterLib,
+    cluster_manager: cluster_management.ClusterManager,
+    fund_amount: int,
+):
+    chunk_size = 100
+    num_pool_users = len(pool_users)
+
+    # Iterate over chunks of pool users and fund their payment addresses
+    for start_index in range(0, num_pool_users, chunk_size):
+        end_index = start_index + chunk_size
+        chunk_pool_users = pool_users[start_index:end_index]
+        pool_users_payment = [pool_user.payment for pool_user in chunk_pool_users]
+
         clusterlib_utils.fund_from_faucet(
-            pool_user.payment,
+            pool_users_payment,
             cluster_obj=cluster_obj,
             faucet_data=cluster_manager.cache.addrs_data["user1"],
             amount=fund_amount,
         )
 
-    # Register the stake address
+def register_pool_users(
+    name_template: str,
+    pool_users: tp.List[clusterlib.PoolUser],
+    cluster_obj: clusterlib.ClusterLib,
+    chunk_size:int =50
+):
     stake_deposit_amt = cluster_obj.g_query.get_address_deposit()
-    stake_addr_reg_cert = [
-        cluster_obj.g_stake_address.gen_stake_addr_registration_cert(
-            addr_name=f"{name_template}_pool_user{i}",
-            deposit_amt=stake_deposit_amt,
-            stake_vkey_file=pool_users[i].stake.vkey_file,
+    no_of_users = len(pool_users)
+    num_chunks = math.ceil(no_of_users / chunk_size)
+    for chunk_index in range(num_chunks):
+        # Determine the start and end index for the current chunk
+        start_index = chunk_index * chunk_size
+        end_index = min(start_index + chunk_size, no_of_users)
+
+        # Get the current chunk of pool users
+        chunk_pool_users = pool_users[start_index:end_index]
+
+        # Generate registration certificates for the current chunk
+        stake_addr_reg_cert = [
+            cluster_obj.g_stake_address.gen_stake_addr_registration_cert(
+                addr_name=f"{name_template}_pool_user{i}",
+                deposit_amt=stake_deposit_amt,
+                stake_vkey_file=pool_user.stake.vkey_file,
+            )
+            for i, pool_user in enumerate(chunk_pool_users, start=start_index)
+        ]
+
+        # Prepare the signing key files for the current chunk
+        pool_users_payment_skey = [pool_user.payment.skey_file for pool_user in chunk_pool_users]
+        pool_users_stake_skey = [pool_user.stake.skey_file for pool_user in chunk_pool_users]
+
+        tx_files_action = clusterlib.TxFiles(
+            certificate_files=stake_addr_reg_cert,
+            signing_key_files=pool_users_payment_skey + pool_users_stake_skey,
         )
-        for i in range(no_of_users)
-    ]
-    pool_users_payment_skey = [pool_user.payment.skey_file for pool_user in pool_users]
-    pool_users_stake_skey = [pool_user.stake.skey_file for pool_user in pool_users]
-    tx_files_action = clusterlib.TxFiles(
-        certificate_files= stake_addr_reg_cert,
-        signing_key_files=pool_users_payment_skey + pool_users_stake_skey,
-    )
-    clusterlib_utils.build_and_submit_tx(
-        cluster_obj=cluster_obj,
-        name_template=f"{name_template}_pool_user",
-        src_address=pool_users[0].payment.address,
-        use_build_cmd=True,
-        tx_files=tx_files_action,
-    )
-    for pool_user in pool_users:
-        assert cluster_obj.g_query.get_stake_addr_info(
-            pool_user.stake.address
-        ).address, f"Stake address is not registered: {pool_user.stake.address}"
 
-    return pool_users
+        # Submit the transaction for the current chunk
+        clusterlib_utils.build_and_submit_tx(
+            cluster_obj=cluster_obj,
+            name_template=f"{name_template}_pool_user_chunk_{chunk_index}",
+            src_address=chunk_pool_users[0].payment.address,
+            use_build_cmd=True,
+            tx_files=tx_files_action,
+        )
 
+        # Verify the registration for each pool user in the current chunk
+        for pool_user in chunk_pool_users:
+            assert cluster_obj.g_query.get_stake_addr_info(
+                pool_user.stake.address
+            ).address, f"Stake address is not registered: {pool_user.stake.address}"
 
 def submit_vote(
     cluster_obj: clusterlib.ClusterLib,
@@ -189,32 +232,46 @@ def submit_vote(
     keys: tp.List[clusterlib.FileType],
     submit_method: str = "",
     use_build_cmd: bool = False,
+    chunk_size: int = 60,
 ) -> clusterlib.TxRawOutput:
-    """Submit a Tx with votes."""
-    tx_files = clusterlib.TxFiles(
-        vote_files=[r.vote_file for r in votes],
-        signing_key_files=[
-            payment_addr.skey_file,
-            *keys,
-        ],
-    )
+    """Submit a Tx with votes in chunks of 60."""
+    tx_outputs = []
+    num_votes = len(votes)
 
-    tx_output = clusterlib_utils.build_and_submit_tx(
-        cluster_obj=cluster_obj,
-        name_template=f"{name_template}_vote",
-        src_address=payment_addr.address,
-        submit_method=submit_method,
-        use_build_cmd=use_build_cmd,
-        tx_files=tx_files,
-    )
+    for chunk_index in range(math.ceil(num_votes / chunk_size)):
+        start_index = chunk_index * chunk_size
+        end_index = min(start_index + chunk_size, num_votes)
 
-    out_utxos = cluster_obj.g_query.get_utxo(tx_raw_output=tx_output)
-    assert (
-        clusterlib.filter_utxos(utxos=out_utxos, address=payment_addr.address)[0].amount
-        == clusterlib.calculate_utxos_balance(tx_output.txins) - tx_output.fee
-    ), f"Incorrect balance for source address `{payment_addr.address}`"
+        # Get the current chunk of votes and keys
+        chunk_votes = votes[start_index:end_index]
+        chunk_keys = keys[start_index:end_index]
 
-    return tx_output
+        tx_files = clusterlib.TxFiles(
+            vote_files=[r.vote_file for r in chunk_votes],
+            signing_key_files=[
+                payment_addr.skey_file,
+                *chunk_keys,
+            ],
+        )
+
+        tx_output = clusterlib_utils.build_and_submit_tx(
+            cluster_obj=cluster_obj,
+            name_template=f"{name_template}_vote_chunk_{chunk_index}",
+            src_address=payment_addr.address,
+            submit_method=submit_method,
+            use_build_cmd=use_build_cmd,
+            tx_files=tx_files,
+        )
+
+        out_utxos = cluster_obj.g_query.get_utxo(tx_raw_output=tx_output)
+        assert (
+            clusterlib.filter_utxos(utxos=out_utxos, address=payment_addr.address)[0].amount
+            == clusterlib.calculate_utxos_balance(tx_output.txins) - tx_output.fee
+        ), f"Incorrect balance for source address `{payment_addr.address}`"
+
+        tx_outputs.append(tx_output)
+
+    return tx_outputs
 
 
 def cast_vote(
@@ -373,7 +430,7 @@ def propose_change_constitution(
     anchor_data_hash: str,
     constitution_url: str,
     constitution_hash: str,
-    pool_users: clusterlib.PoolUser,
+    pool_users: tp.List[clusterlib.PoolUser],
 ) -> tp.Tuple[clusterlib.ActionConstitution, str, int]:
     """Propose a constitution change."""
     deposit_amt = cluster_obj.conway_genesis["govActionDeposit"]
@@ -393,9 +450,9 @@ def propose_change_constitution(
             constitution_hash=constitution_hash,
             prev_action_txid=prev_action_rec.txid,
             prev_action_ix=prev_action_rec.ix,
-            deposit_return_stake_vkey_file=pool_user.stake.vkey_file,
+            deposit_return_stake_vkey_file=pool_users[i].stake.vkey_file,
         )
-        for pool_user in pool_users
+        for i in range(len(pool_users))
     ]
 
     tx_files = clusterlib.TxFiles(
@@ -441,7 +498,6 @@ def propose_change_constitution(
     ), "Incorrect action tag"
 
     action_ix = prop_action["actionId"]["govActionIx"]
-
     return constitution_actions, action_txid, action_ix
 
 
@@ -450,13 +506,15 @@ def propose_pparams_update(
     name_template: str,
     anchor_url: str,
     anchor_data_hash: str,
-    pool_users: clusterlib.PoolUser,
+    pool_users: tp.List[clusterlib.PoolUser],
     proposals: tp.List[clusterlib_utils.UpdateProposal],
     prev_action_rec: tp.Optional[governance_utils.PrevActionRec] = None,
+    num_pool_users: int =1
 ) -> PParamPropRec:
     """Propose a pparams update."""
     deposit_amt = cluster_obj.conway_genesis["govActionDeposit"]
-
+    selected_pool_users = pool_users[:num_pool_users]
+    
     prev_action_rec = prev_action_rec or governance_utils.get_prev_action(
         action_type=governance_utils.PrevGovActionIds.PPARAM_UPDATE,
         gov_state=cluster_obj.g_conway_governance.query.gov_state(),
@@ -474,34 +532,36 @@ def propose_pparams_update(
             prev_action_ix=prev_action_rec.ix,
             deposit_return_stake_vkey_file=pool_user.stake.vkey_file,
         )
-        for pool_user in pool_users
+        for pool_user in selected_pool_users
     ]
-
+    print(f"\n{len(pparams_actions)} proposals with {len(update_args)} args for protocol-params action are being submitted in a single transaction")
     tx_files_action = clusterlib.TxFiles(
         proposal_files=[pparams_action.action_file for pparams_action in pparams_actions],
-        signing_key_files=[pool_user.payment.skey_file for pool_user in pool_users],
+        signing_key_files=[pool_user.payment.skey_file for pool_user in selected_pool_users],
     )
 
     # Make sure we have enough time to submit the proposal in one epoch
     clusterlib_utils.wait_for_epoch_interval(
         cluster_obj=cluster_obj, start=1, stop=common.EPOCH_STOP_SEC_BUFFER
     )
-
+    address_utxos = [cluster_obj.g_query.get_utxo(pool_user.payment.address) for pool_user in selected_pool_users]
+    flatenned_utxos = list(chain.from_iterable(address_utxos))
     tx_output_action = clusterlib_utils.build_and_submit_tx(
         cluster_obj=cluster_obj,
         name_template=f"{name_template}_action",
-        src_address=pool_users[0].payment.address,
+        src_address=selected_pool_users[0].payment.address,
+        txins=flatenned_utxos,
         use_build_cmd=True,
         tx_files=tx_files_action,
     )
 
     out_utxos_action = cluster_obj.g_query.get_utxo(tx_raw_output=tx_output_action)
     assert (
-        clusterlib.filter_utxos(utxos=out_utxos_action, address=pool_users[0].payment.address)[0].amount
+        clusterlib.filter_utxos(utxos=out_utxos_action, address=selected_pool_users[0].payment.address)[0].amount
         == clusterlib.calculate_utxos_balance(tx_output_action.txins)
         - tx_output_action.fee
         - deposit_amt
-    ), f"Incorrect balance for source address `{pool_users[0].payment.address}`"
+    ), f"Incorrect balance for source address `{selected_pool_users[0].payment.address}`"
 
     action_txid = cluster_obj.g_transaction.get_txid(tx_body_file=tx_output_action.out_file)
     action_gov_state = cluster_obj.g_conway_governance.query.gov_state()

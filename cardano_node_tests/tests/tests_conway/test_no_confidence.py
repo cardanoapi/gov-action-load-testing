@@ -42,7 +42,7 @@ def pool_users_lg(
         name_template=name_template,
         cluster_obj=cluster,
         caching_key=key,
-        no_of_users=30
+        no_of_users=300
     )
 
 
@@ -51,12 +51,14 @@ class TestNoConfidence:
 
     @allure.link(helpers.get_vcs_link())
     @pytest.mark.skipif(not configuration.HAS_CC, reason="Runs only on setup with CC")
+    @pytest.mark.parametrize("num_pool_users", reversed(range(115, 119)))
     @pytest.mark.long
     def test_no_confidence_action(
         self,
         cluster_manager: cluster_management.ClusterManager,
         cluster_lock_governance: governance_setup.GovClusterT,
         pool_users_lg: clusterlib.PoolUser,
+        num_pool_users: int
     ):
         """Test enactment of no confidence action.
 
@@ -69,276 +71,282 @@ class TestNoConfidence:
         * check that the action is enacted
         * check that it's not possible to vote on enacted action
         """
-        # pylint: disable=too-many-locals,too-many-statements
-        cluster, governance_data = cluster_lock_governance
-        temp_template = common.get_test_id(cluster)
-        total_participants = len(pool_users_lg)
-        
-        init_return_account_balances = [cluster.g_query.get_stake_addr_info
-                                        (pool_user_lg.stake.address)
-                                        .reward_account_balance for pool_user_lg in pool_users_lg]
+        try: 
+            # pylint: disable=too-many-locals,too-many-statements
+            cluster, governance_data = cluster_lock_governance
+            temp_template = common.get_test_id(cluster)
+            pool_users_lg = pool_users_lg[:num_pool_users]
+            total_participants = len(pool_users_lg)
+            
+            init_return_account_balances = [cluster.g_query.get_stake_addr_info
+                                            (pool_user_lg.stake.address)
+                                            .reward_account_balance for pool_user_lg in pool_users_lg]
 
-        # if conway_common.is_in_bootstrap(cluster_obj=cluster):
-        #     pytest.skip("We can't create a needed 'update committee' previous action in bootstrap.")
+            if conway_common.is_in_bootstrap(cluster_obj=cluster):
+                pytest.skip("We can't create a needed 'update committee' previous action in bootstrap.")
 
-        # Reinstate CC members first, if needed, so we have a previous action
-        prev_action_rec = governance_utils.get_prev_action(
-            action_type=governance_utils.PrevGovActionIds.COMMITTEE,
-            gov_state=cluster.g_conway_governance.query.gov_state(),
-        )
-        if not prev_action_rec.txid:
-            governance_setup.reinstate_committee(
-                cluster_obj=cluster,
-                governance_data=governance_data,
-                name_template=f"{temp_template}_reinstate1",
-                pool_user=pool_users_lg[0],
-            )
+            # Reinstate CC members first, if needed, so we have a previous action
             prev_action_rec = governance_utils.get_prev_action(
                 action_type=governance_utils.PrevGovActionIds.COMMITTEE,
                 gov_state=cluster.g_conway_governance.query.gov_state(),
             )
-        assert prev_action_rec.txid, "No previous action found, it is needed for 'no confidence'"
-
-        # Create an action
-        deposit_amt = cluster.conway_genesis["govActionDeposit"]
-        anchor_url = "http://www.cc-no-confidence.com"
-        anchor_data_hash = "5d372dca1a4cc90d7d16d966c48270e33e3aa0abcb0e78f0d5ca7ff330d2245d"
-
-        _url = helpers.get_vcs_link()
-        [
-            r.start(url=_url)
-            for r in (
-                reqc.cli018,
-                reqc.cip013,
-                reqc.cip029,
-                reqc.cip030en,
-                reqc.cip031a_04,
-                reqc.cip054_04,
-            )
-        ]
-        no_confidence_actions = [
-            cluster.g_conway_governance.action.create_no_confidence(
-                action_name=temp_template,
-                deposit_amt=deposit_amt,
-                anchor_url=anchor_url,
-                anchor_data_hash=anchor_data_hash,
-                prev_action_txid=prev_action_rec.txid,
-                prev_action_ix=prev_action_rec.ix,
-                deposit_return_stake_vkey_file=pool_user_lg.stake.vkey_file,
-            )
-            for pool_user_lg in pool_users_lg
-        ]
-        [r.success() for r in (reqc.cli018, reqc.cip031a_04, reqc.cip054_04)]
-        
-        print(f"{len(no_confidence_actions)} proposals for no-confidence action are being submitted in a single transaction")
-        
-        tx_files_action = clusterlib.TxFiles(
-            proposal_files=[no_confidence_action.action_file for no_confidence_action in no_confidence_actions],
-            signing_key_files=[pool_user_lg.payment.skey_file for pool_user_lg in pool_users_lg],
-        )
-
-        # Make sure we have enough time to submit the proposal in one epoch
-        clusterlib_utils.wait_for_epoch_interval(
-            cluster_obj=cluster, start=1, stop=common.EPOCH_STOP_SEC_BUFFER
-        )
-        address_utxos = [cluster.g_query.get_utxo(pool_user_lg.payment.address) for pool_user_lg in pool_users_lg]
-        flatenned_utxos = list(chain.from_iterable(address_utxos))
-        tx_output_action = clusterlib_utils.build_and_submit_tx(
-            cluster_obj=cluster,
-            name_template=f"{temp_template}_action",
-            src_address=pool_users_lg[0].payment.address,
-            txins=flatenned_utxos,
-            use_build_cmd=True,
-            tx_files=tx_files_action,
-        )
-
-        out_utxos_action = cluster.g_query.get_utxo(tx_raw_output=tx_output_action)
-        
-        assert (
-            clusterlib.filter_utxos(utxos=out_utxos_action, address=pool_users_lg[0].payment.address)[
-                0
-            ].amount
-            == clusterlib.calculate_utxos_balance(tx_output_action.txins)
-            - tx_output_action.fee
-            - deposit_amt
-        ), f"Incorrect balance for source address `{pool_users_lg[0].payment.address}`"
-
-        action_txid = cluster.g_transaction.get_txid(tx_body_file=tx_output_action.out_file)
-        action_gov_state = cluster.g_conway_governance.query.gov_state()
-        _cur_epoch = cluster.g_query.get_epoch()
-        conway_common.save_gov_state(
-            gov_state=action_gov_state, name_template=f"{temp_template}_action_{_cur_epoch}"
-        )
-        prop_action = governance_utils.lookup_proposal(
-            gov_state=action_gov_state, action_txid=action_txid
-        )
-        assert prop_action, "No confidence action not found"
-        assert (
-            prop_action["proposalProcedure"]["govAction"]["tag"]
-            == governance_utils.ActionTags.NO_CONFIDENCE.value
-        ), "Incorrect action tag"
-
-        reqc.cip029.success()
-
-        action_ix = prop_action["actionId"]["govActionIx"]
-
-        reqc.cip069en.start(url=helpers.get_vcs_link())
-
-        # Vote & disapprove the action
-        conway_common.cast_vote(
-            cluster_obj=cluster,
-            governance_data=governance_data,
-            name_template=f"{temp_template}_no",
-            payment_addr=pool_users_lg[0].payment,
-            action_txid=action_txid,
-            action_ix=action_ix,
-            approve_drep=False,
-            approve_spo=False,
-        )
-        print(len(governance_data.dreps_reg), " DReps are voting")
-        print(len(governance_data.pools_cold), " SPOs are voting")
-        # Vote & approve the action
-        reqc.cip039.start(url=helpers.get_vcs_link())
-        voted_votes = conway_common.cast_vote(
-            cluster_obj=cluster,
-            governance_data=governance_data,
-            name_template=f"{temp_template}_yes",
-            payment_addr=pool_users_lg[0].payment,
-            action_txid=action_txid,
-            action_ix=action_ix,
-            approve_drep=True,
-            approve_spo=True,
-        )
-
-        # Testnet will be in state of no confidence, respin is needed
-        with cluster_manager.respin_on_failure():
-            # Check that CC cannot vote on "no confidence" action
-            with pytest.raises(clusterlib.CLIError) as excinfo:
-                conway_common.cast_vote(
+            if not prev_action_rec.txid:
+                governance_setup.reinstate_committee(
                     cluster_obj=cluster,
                     governance_data=governance_data,
-                    name_template=f"{temp_template}_with_ccs",
-                    payment_addr=pool_users_lg[0].payment,
-                    action_txid=action_txid,
-                    action_ix=action_ix,
-                    approve_cc=False,
-                    approve_drep=True,
-                    approve_spo=True,
+                    name_template=f"{temp_template}_reinstate1",
+                    pool_user=pool_users_lg[0],
                 )
-            err_str = str(excinfo.value)
-            assert "CommitteeVoter" in err_str, err_str
-
-            # Check ratification
-            xfail_ledger_3979_msgs = set()
-            for __ in range(3):
-                _cur_epoch = cluster.wait_for_new_epoch(padding_seconds=5)
-                rat_gov_state = cluster.g_conway_governance.query.gov_state()
-                conway_common.save_gov_state(
-                    gov_state=rat_gov_state, name_template=f"{temp_template}_rat_{_cur_epoch}"
+                prev_action_rec = governance_utils.get_prev_action(
+                    action_type=governance_utils.PrevGovActionIds.COMMITTEE,
+                    gov_state=cluster.g_conway_governance.query.gov_state(),
                 )
-                rat_action = governance_utils.lookup_ratified_actions(
-                    gov_state=rat_gov_state, action_txid=action_txid
+            assert prev_action_rec.txid, "No previous action found, it is needed for 'no confidence'"
+
+            # Create an action
+            deposit_amt = cluster.conway_genesis["govActionDeposit"]
+            anchor_url = "http://www.cc-no-confidence.com"
+            anchor_data_hash = "5d372dca1a4cc90d7d16d966c48270e33e3aa0abcb0e78f0d5ca7ff330d2245d"
+
+            _url = helpers.get_vcs_link()
+            [
+                r.start(url=_url)
+                for r in (
+                    reqc.cli018,
+                    reqc.cip013,
+                    reqc.cip029,
+                    reqc.cip030en,
+                    reqc.cip031a_04,
+                    reqc.cip054_04,
                 )
-                if rat_action:
-                    break
+            ]
+            no_confidence_actions = [
+                cluster.g_conway_governance.action.create_no_confidence(
+                    action_name=temp_template,
+                    deposit_amt=deposit_amt,
+                    anchor_url=f"http://www.cc-no-confidence{i}.com",
+                    anchor_data_hash=anchor_data_hash,
+                    prev_action_txid=prev_action_rec.txid,
+                    prev_action_ix=prev_action_rec.ix,
+                    deposit_return_stake_vkey_file=pool_users_lg[i].stake.vkey_file,
+                )
+                for i in range(total_participants)
+            ]
+            [r.success() for r in (reqc.cli018, reqc.cip031a_04, reqc.cip054_04)]
+            
+            print(f"\n{len(no_confidence_actions)} proposals for no-confidence action are being submitted in a single transaction")
+            
+            tx_files_action = clusterlib.TxFiles(
+                proposal_files=[no_confidence_action.action_file for no_confidence_action in no_confidence_actions],
+                signing_key_files=[pool_user_lg.payment.skey_file for pool_user_lg in pool_users_lg],
+            )
 
-                # Known ledger issue where only one expired action gets removed in one epoch.
-                # See https://github.com/IntersectMBO/cardano-ledger/issues/3979
-                if not rat_action and conway_common.possible_rem_issue(
-                    gov_state=rat_gov_state, epoch=_cur_epoch
-                ):
-                    xfail_ledger_3979_msgs.add("Only single expired action got removed")
-                    continue
+            # Make sure we have enough time to submit the proposal in one epoch
+            clusterlib_utils.wait_for_epoch_interval(
+                cluster_obj=cluster, start=1, stop=common.EPOCH_STOP_SEC_BUFFER
+            )
+            address_utxos = [cluster.g_query.get_utxo(pool_user_lg.payment.address) for pool_user_lg in pool_users_lg]
+            flatenned_utxos = list(chain.from_iterable(address_utxos))
+            tx_output_action = clusterlib_utils.build_and_submit_tx(
+                cluster_obj=cluster,
+                name_template=f"{temp_template}_action",
+                src_address=pool_users_lg[0].payment.address,
+                txins=flatenned_utxos,
+                use_build_cmd=True,
+                tx_files=tx_files_action,
+            )
 
-                msg = "Action not found in ratified actions"
-                raise AssertionError(msg)
+            out_utxos_action = cluster.g_query.get_utxo(tx_raw_output=tx_output_action)
+            
+            assert (
+                clusterlib.filter_utxos(utxos=out_utxos_action, address=pool_users_lg[0].payment.address)[
+                    0
+                ].amount
+                == clusterlib.calculate_utxos_balance(tx_output_action.txins)
+                - tx_output_action.fee
+                - deposit_amt
+            ), f"Incorrect balance for source address `{pool_users_lg[0].payment.address}`"
 
-            # Disapprove ratified action, the voting shouldn't have any effect
+            action_txid = cluster.g_transaction.get_txid(tx_body_file=tx_output_action.out_file)
+            action_gov_state = cluster.g_conway_governance.query.gov_state()
+            _cur_epoch = cluster.g_query.get_epoch()
+            conway_common.save_gov_state(
+                gov_state=action_gov_state, name_template=f"{temp_template}_action_{_cur_epoch}"
+            )
+            prop_action = governance_utils.lookup_proposal(
+                gov_state=action_gov_state, action_txid=action_txid
+            )
+            assert prop_action, "No confidence action not found"
+            assert (
+                prop_action["proposalProcedure"]["govAction"]["tag"]
+                == governance_utils.ActionTags.NO_CONFIDENCE.value
+            ), "Incorrect action tag"
+
+            reqc.cip029.success()
+
+            reqc.cip069en.start(url=helpers.get_vcs_link())
+
+            # Vote & disapprove the action
             conway_common.cast_vote(
                 cluster_obj=cluster,
                 governance_data=governance_data,
-                name_template=f"{temp_template}_after_ratification",
+                name_template=f"{temp_template}_no",
                 payment_addr=pool_users_lg[0].payment,
                 action_txid=action_txid,
-                action_ix=action_ix,
+                action_ix=0,
                 approve_drep=False,
                 approve_spo=False,
             )
-
-            reqc.cip038_03.start(url=helpers.get_vcs_link())
-            assert rat_gov_state["nextRatifyState"][
-                "ratificationDelayed"
-            ], "Ratification not delayed"
-            reqc.cip038_03.success()
-
-            # Check enactment
-            _url = helpers.get_vcs_link()
-            [r.start(url=_url) for r in (reqc.cip032en, reqc.cip057)]
-            _cur_epoch = cluster.wait_for_new_epoch(padding_seconds=5)
-            enact_gov_state = cluster.g_conway_governance.query.gov_state()
-            conway_common.save_gov_state(
-                gov_state=enact_gov_state, name_template=f"{temp_template}_enact_{_cur_epoch}"
+            print(len(governance_data.dreps_reg), " DReps are voting")
+            print(len(governance_data.pools_cold), " SPOs are voting")
+            # Vote & approve the action
+            reqc.cip039.start(url=helpers.get_vcs_link())
+            voted_votes = conway_common.cast_vote(
+                cluster_obj=cluster,
+                governance_data=governance_data,
+                name_template=f"{temp_template}_yes",
+                payment_addr=pool_users_lg[0].payment,
+                action_txid=action_txid,
+                action_ix=0,
+                approve_drep=True,
+                approve_spo=True,
             )
-            assert not conway_common.get_committee_val(
-                data=enact_gov_state
-            ), "Committee is not empty"
-            [r.success() for r in (reqc.cip013, reqc.cip039, reqc.cip057)]
 
-            enact_prev_action_rec = governance_utils.get_prev_action(
-                action_type=governance_utils.PrevGovActionIds.COMMITTEE,
-                gov_state=enact_gov_state,
-            )
-            assert enact_prev_action_rec.txid == action_txid, "Incorrect previous action Txid"
-            assert enact_prev_action_rec.ix == action_ix, "Incorrect previous action index"
-            [r.success() for r in (reqc.cip032en, reqc.cip069en)]
+            # Testnet will be in state of no confidence, respin is needed
+            with cluster_manager.respin_on_failure():
+                # Check that CC cannot vote on "no confidence" action
+                with pytest.raises(clusterlib.CLIError) as excinfo:
+                    conway_common.cast_vote(
+                        cluster_obj=cluster,
+                        governance_data=governance_data,
+                        name_template=f"{temp_template}_with_ccs",
+                        payment_addr=pool_users_lg[0].payment,
+                        action_txid=action_txid,
+                        action_ix=0, 
+                        approve_cc=False,
+                        approve_drep=True,
+                        approve_spo=True,
+                    )
+                err_str = str(excinfo.value)
+                assert "CommitteeVoter" in err_str, err_str
 
-            reqc.cip034en.start(url=helpers.get_vcs_link())
-            enact_deposit_returned = cluster.g_query.get_stake_addr_info(
-                pool_users_lg[total_participants-1].stake.address
-            ).reward_account_balance
-            
-            assert (
-                enact_deposit_returned == init_return_account_balances[total_participants-1] + deposit_amt
-            ), "Incorrect return account balance"
-            [r.success() for r in (reqc.cip030en, reqc.cip034en)]
+                # Check ratification
+                xfail_ledger_3979_msgs = set()
+                for __ in range(3):
+                    _cur_epoch = cluster.wait_for_new_epoch(padding_seconds=5)
+                    rat_gov_state = cluster.g_conway_governance.query.gov_state()
+                    conway_common.save_gov_state(
+                        gov_state=rat_gov_state, name_template=f"{temp_template}_rat_{_cur_epoch}"
+                    )
+                    rat_action = governance_utils.lookup_ratified_actions(
+                        gov_state=rat_gov_state, action_txid=action_txid
+                    )
+                    if rat_action:
+                        break
 
-            # Try to vote on enacted action
-            with pytest.raises(clusterlib.CLIError) as excinfo:
+                    # Known ledger issue where only one expired action gets removed in one epoch.
+                    # See https://github.com/IntersectMBO/cardano-ledger/issues/3979
+                    if not rat_action and conway_common.possible_rem_issue(
+                        gov_state=rat_gov_state, epoch=_cur_epoch
+                    ):
+                        xfail_ledger_3979_msgs.add("Only single expired action got removed")
+                        continue
+
+                    msg = "Action not found in ratified actions"
+                    raise AssertionError(msg)
+
+                # Disapprove ratified action, the voting shouldn't have any effect
                 conway_common.cast_vote(
                     cluster_obj=cluster,
                     governance_data=governance_data,
-                    name_template=f"{temp_template}_enacted",
+                    name_template=f"{temp_template}_after_ratification",
                     payment_addr=pool_users_lg[0].payment,
                     action_txid=action_txid,
-                    action_ix=action_ix,
+                    action_ix=0, 
                     approve_drep=False,
                     approve_spo=False,
                 )
-            err_str = str(excinfo.value)
-            assert "(GovActionsDoNotExist" in err_str, err_str
 
-            reqc.cip041.start(url=helpers.get_vcs_link())
-            governance_setup.reinstate_committee(
-                cluster_obj=cluster,
-                governance_data=governance_data,
-                name_template=f"{temp_template}_reinstate2",
-                pool_user=pool_users_lg[0],
-            )
-            reqc.cip041.success()
+                reqc.cip038_03.start(url=helpers.get_vcs_link())
+                assert rat_gov_state["nextRatifyState"][
+                    "ratificationDelayed"
+                ], "Ratification not delayed"
+                reqc.cip038_03.success()
 
-        # Check action view
-        governance_utils.check_action_view(cluster_obj=cluster, action_data=no_confidence_actions[total_participants - 1 ])
+                # Check enactment
+                _url = helpers.get_vcs_link()
+                [r.start(url=_url) for r in (reqc.cip032en, reqc.cip057)]
+                _cur_epoch = cluster.wait_for_new_epoch(padding_seconds=5)
+                enact_gov_state = cluster.g_conway_governance.query.gov_state()
+                conway_common.save_gov_state(
+                    gov_state=enact_gov_state, name_template=f"{temp_template}_enact_{_cur_epoch}"
+                )
+                assert not conway_common.get_committee_val(
+                    data=enact_gov_state
+                ), "Committee is not empty"
+                [r.success() for r in (reqc.cip013, reqc.cip039, reqc.cip057)]
 
-        # Check vote view
-        if voted_votes.cc:
-            governance_utils.check_vote_view(cluster_obj=cluster, vote_data=voted_votes.cc[0])
-        governance_utils.check_vote_view(cluster_obj=cluster, vote_data=voted_votes.drep[0])
-        governance_utils.check_vote_view(cluster_obj=cluster, vote_data=voted_votes.spo[0])
+                enact_prev_action_rec = governance_utils.get_prev_action(
+                    action_type=governance_utils.PrevGovActionIds.COMMITTEE,
+                    gov_state=enact_gov_state,
+                )
+                assert enact_prev_action_rec.txid == action_txid, "Incorrect previous action Txid"
+                assert enact_prev_action_rec.ix == 0, "Incorrect previous action index"
+                [r.success() for r in (reqc.cip032en, reqc.cip069en)]
 
-        if xfail_ledger_3979_msgs:
-            ledger_3979 = issues.ledger_3979.copy()
-            ledger_3979.message = " ;".join(xfail_ledger_3979_msgs)
-            ledger_3979.finish_test()
+                reqc.cip034en.start(url=helpers.get_vcs_link())
+                enact_deposit_returned = cluster.g_query.get_stake_addr_info(
+                    pool_users_lg[total_participants-1].stake.address
+                ).reward_account_balance
+                
+                assert (
+                    enact_deposit_returned == init_return_account_balances[total_participants-1] + deposit_amt
+                ), "Incorrect return account balance"
+                [r.success() for r in (reqc.cip030en, reqc.cip034en)]
+
+                # Try to vote on enacted action
+                with pytest.raises(clusterlib.CLIError) as excinfo:
+                    conway_common.cast_vote(
+                        cluster_obj=cluster,
+                        governance_data=governance_data,
+                        name_template=f"{temp_template}_enacted",
+                        payment_addr=pool_users_lg[0].payment,
+                        action_txid=action_txid,
+                        action_ix=0, # no need to check for all actions
+                        approve_drep=False,
+                        approve_spo=False,
+                    )
+                err_str = str(excinfo.value)
+                assert "(GovActionsDoNotExist" in err_str, err_str
+
+                reqc.cip041.start(url=helpers.get_vcs_link())
+                governance_setup.reinstate_committee(
+                    cluster_obj=cluster,
+                    governance_data=governance_data,
+                    name_template=f"{temp_template}_reinstate2",
+                    pool_user=pool_users_lg[0],
+                )
+                reqc.cip041.success()
+
+            # Check action view
+            governance_utils.check_action_view(cluster_obj=cluster, action_data=no_confidence_actions[total_participants - 1 ])
+
+            # Check vote view
+            if voted_votes.cc:
+                governance_utils.check_vote_view(cluster_obj=cluster, vote_data=voted_votes.cc[0])
+            governance_utils.check_vote_view(cluster_obj=cluster, vote_data=voted_votes.drep[0])
+            governance_utils.check_vote_view(cluster_obj=cluster, vote_data=voted_votes.spo[0])
+
+            if xfail_ledger_3979_msgs:
+                ledger_3979 = issues.ledger_3979.copy()
+                ledger_3979.message = " ;".join(xfail_ledger_3979_msgs)
+                ledger_3979.finish_test()
+
+        except clusterlib.CLIError as exc:
+            err_str = str(exc)
+            if "MaxTxSizeUTxO" in err_str:
+                print(f"Fails at submitting {num_pool_users} no-confidence actions in a single transaction")
+                return
 
     @allure.link(helpers.get_vcs_link())
     @pytest.mark.skipif(not configuration.HAS_CC, reason="Runs only on setup with CC")

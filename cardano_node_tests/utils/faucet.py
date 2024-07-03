@@ -27,6 +27,9 @@ def fund_from_faucet(
         (r.payment if hasattr(r, "payment") else r)
         for r in dst_addrs  # type: ignore
     ]
+    if(isinstance(dst_addr_records[0], list)):
+        dst_addr_records=dst_addr_records[0]
+        
     if isinstance(amount, int):
         amount = [amount] * len(dst_addr_records)
 

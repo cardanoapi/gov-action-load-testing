@@ -1,5 +1,6 @@
 import dataclasses
 import logging
+import math
 import pathlib as pl
 import pickle
 import typing as tp
@@ -18,7 +19,7 @@ LOGGER = logging.getLogger(__name__)
 GOV_DATA_DIR = "governance_data"
 GOV_DATA_STORE = "governance_data.pickle"
 
-DREPS_NUM = 30
+DREPS_NUM = 100
 
 
 def _get_committee_val(data: tp.Dict[str, tp.Any]) -> tp.Dict[str, tp.Any]:
@@ -43,9 +44,9 @@ def _cast_vote(
     payment_addr: clusterlib.AddressRecord,
     action_txid: str,
     action_ix: int,
+    chunk_size: int = 30
 ) -> None:
-    """Approve a governace action.
-
+    """Approve a governance action in chunks of 30 (default).
     This is a simplified version meant just for governance setup.
     Use `tests.conway_common.cast_vote` for tests.
     """
@@ -70,34 +71,38 @@ def _cast_vote(
         for i, p in enumerate(governance_data.pools_cold, start=1)
     ]
 
-    tx_files = clusterlib.TxFiles(
-        vote_files=[
-            *[r.vote_file for r in votes_drep],
-            *[r.vote_file for r in votes_spo],
-        ],
-        signing_key_files=[
-            payment_addr.skey_file,
-            *[r.skey_file for r in governance_data.pools_cold],
-            *[r.key_pair.skey_file for r in governance_data.dreps_reg],
-        ],
-    )
+    all_votes = votes_drep + votes_spo
 
-    # Make sure we have enough time to submit the votes in one epoch
-    clusterlib_utils.wait_for_epoch_interval(cluster_obj=cluster_obj, start=1, stop=-40)
+    def submit_votes_chunk(votes_chunk, chunk_index):
+        tx_files = clusterlib.TxFiles(
+            vote_files=[r.vote_file for r in votes_chunk],
+            signing_key_files=[
+                payment_addr.skey_file,
+                *[r.skey_file for r in governance_data.pools_cold],
+                *[r.key_pair.skey_file for r in governance_data.dreps_reg],
+            ],
+        )
 
-    tx_output = clusterlib_utils.build_and_submit_tx(
-        cluster_obj=cluster_obj,
-        name_template=f"{name_template}_vote",
-        src_address=payment_addr.address,
-        use_build_cmd=True,
-        tx_files=tx_files,
-    )
+        # Make sure we have enough time to submit the votes in one epoch
+        clusterlib_utils.wait_for_epoch_interval(cluster_obj=cluster_obj, start=1, stop=-40)
 
-    out_utxos = cluster_obj.g_query.get_utxo(tx_raw_output=tx_output)
-    assert (
-        clusterlib.filter_utxos(utxos=out_utxos, address=payment_addr.address)[0].amount
-        == clusterlib.calculate_utxos_balance(tx_output.txins) - tx_output.fee
-    ), f"Incorrect balance for source address `{payment_addr.address}`"
+        tx_output = clusterlib_utils.build_and_submit_tx(
+            cluster_obj=cluster_obj,
+            name_template=f"{name_template}_vote_chunk_{chunk_index}",
+            src_address=payment_addr.address,
+            use_build_cmd=True,
+            tx_files=tx_files,
+        )
+
+        out_utxos = cluster_obj.g_query.get_utxo(tx_raw_output=tx_output)
+        assert (
+            clusterlib.filter_utxos(utxos=out_utxos, address=payment_addr.address)[0].amount
+            == clusterlib.calculate_utxos_balance(tx_output.txins) - tx_output.fee
+        ), f"Incorrect balance for source address `{payment_addr.address}`"
+
+    for i in range(0, len(all_votes), chunk_size):
+        chunk = all_votes[i:i + chunk_size]
+        submit_votes_chunk(chunk, i // chunk_size)
 
     gov_state = cluster_obj.g_conway_governance.query.gov_state()
     prop_vote = governance_utils.lookup_proposal(
@@ -137,7 +142,8 @@ def create_dreps(
     cluster_obj: clusterlib.ClusterLib,
     payment_addr: clusterlib.AddressRecord,
     pool_users: tp.List[clusterlib.PoolUser],
-    destination_dir: clusterlib.FileType = ".",
+    destination_dir: str = ".",
+    chunk_size: int = 30,
 ) -> tp.Tuple[tp.List[governance_utils.DRepRegistration], tp.List[clusterlib.PoolUser]]:
     no_of_addrs = len(pool_users)
 
@@ -149,65 +155,73 @@ def create_dreps(
     stake_deposit = cluster_obj.g_query.get_address_deposit()
     drep_users = pool_users[:DREPS_NUM]
 
-    # Create DRep registration certs
-    drep_reg_records = [
-        governance_utils.get_drep_reg_record(
+    all_drep_reg_records = []
+    for chunk_index in range(math.ceil(DREPS_NUM / chunk_size)):
+        start_index = chunk_index * chunk_size
+        end_index = min(start_index + chunk_size, DREPS_NUM)
+        chunk_drep_users = drep_users[start_index:end_index]
+
+        # Create DRep registration certs for the chunk
+        drep_reg_records = [
+            governance_utils.get_drep_reg_record(
+                cluster_obj=cluster_obj,
+                name_template=f"{name_template}_{i + start_index + 1}",
+                destination_dir=destination_dir,
+            )
+            for i in range(len(chunk_drep_users))
+        ]
+        
+        # Create stake address registration certs for the chunk
+        stake_reg_certs = [
+            cluster_obj.g_stake_address.gen_stake_addr_registration_cert(
+                addr_name=f"{name_template}_addr{i + start_index + 1}",
+                deposit_amt=stake_deposit,
+                stake_vkey_file=du.stake.vkey_file,
+                destination_dir=destination_dir,
+            )
+            for i, du in enumerate(chunk_drep_users)
+        ]
+
+        # Create vote delegation certs for the chunk
+        stake_deleg_certs = [
+            cluster_obj.g_stake_address.gen_vote_delegation_cert(
+                addr_name=f"{name_template}_addr{i + start_index + 1}",
+                stake_vkey_file=du.stake.vkey_file,
+                drep_key_hash=drep_reg_records[i].drep_id,
+                destination_dir=destination_dir,
+            )
+            for i, du in enumerate(chunk_drep_users)
+        ]
+
+        # Make sure we have enough time to finish the registration/delegation in one epoch
+        clusterlib_utils.wait_for_epoch_interval(cluster_obj=cluster_obj, start=1, stop=-15)
+
+        tx_files = clusterlib.TxFiles(
+            certificate_files=[
+                *[r.registration_cert for r in drep_reg_records],
+                *stake_reg_certs,
+                *stake_deleg_certs,
+            ],
+            signing_key_files=[
+                payment_addr.skey_file,
+                *[r.stake.skey_file for r in chunk_drep_users],
+                *[r.key_pair.skey_file for r in drep_reg_records],
+            ],
+        )
+        
+        clusterlib_utils.build_and_submit_tx(
             cluster_obj=cluster_obj,
-            name_template=f"{name_template}_{i}",
+            name_template=f"{name_template}_reg_chunk_{chunk_index}",
+            src_address=payment_addr.address,
+            use_build_cmd=True,
+            tx_files=tx_files,
+            deposit=(drep_reg_records[0].deposit + stake_deposit),
             destination_dir=destination_dir,
         )
-        for i in range(1, DREPS_NUM + 1)
-    ]
 
-    # Create stake address registration certs
-    stake_reg_certs = [
-        cluster_obj.g_stake_address.gen_stake_addr_registration_cert(
-            addr_name=f"{name_template}_addr{i}",
-            deposit_amt=stake_deposit,
-            stake_vkey_file=du.stake.vkey_file,
-            destination_dir=destination_dir,
-        )
-        for i, du in enumerate(drep_users, start=1)
-    ]
+        all_drep_reg_records.extend(drep_reg_records)
 
-    # Create vote delegation cert
-    stake_deleg_certs = [
-        cluster_obj.g_stake_address.gen_vote_delegation_cert(
-            addr_name=f"{name_template}_addr{i + 1}",
-            stake_vkey_file=du.stake.vkey_file,
-            drep_key_hash=drep_reg_records[i].drep_id,
-            destination_dir=destination_dir,
-        )
-        for i, du in enumerate(drep_users)
-    ]
-
-    # Make sure we have enough time to finish the registration/delegation in one epoch
-    clusterlib_utils.wait_for_epoch_interval(cluster_obj=cluster_obj, start=1, stop=-15)
-
-    tx_files = clusterlib.TxFiles(
-        certificate_files=[
-            *[r.registration_cert for r in drep_reg_records],
-            *stake_reg_certs,
-            *stake_deleg_certs,
-        ],
-        signing_key_files=[
-            payment_addr.skey_file,
-            *[r.stake.skey_file for r in drep_users],
-            *[r.key_pair.skey_file for r in drep_reg_records],
-        ],
-    )
-
-    clusterlib_utils.build_and_submit_tx(
-        cluster_obj=cluster_obj,
-        name_template=f"{name_template}_reg",
-        src_address=payment_addr.address,
-        use_build_cmd=True,
-        tx_files=tx_files,
-        deposit=(drep_reg_records[0].deposit + stake_deposit) * len(drep_reg_records),
-        destination_dir=destination_dir,
-    )
-
-    return drep_reg_records, drep_users
+    return all_drep_reg_records, drep_users
 
 
 def load_committee(cluster_obj: clusterlib.ClusterLib) -> tp.List[clusterlib.CCMember]:
@@ -476,7 +490,7 @@ def reinstate_committee(
         anchor_url=anchor_url,
         anchor_data_hash=anchor_data_hash,
         threshold=str(cluster_obj.conway_genesis["committee"]["threshold"]),
-        add_cc_members=governance_data.cc_members,
+        add_cc_members=governance_data.cc_members[:3],
         prev_action_txid=prev_action_rec.txid,
         prev_action_ix=prev_action_rec.ix,
         deposit_return_stake_vkey_file=pool_user.stake.vkey_file,

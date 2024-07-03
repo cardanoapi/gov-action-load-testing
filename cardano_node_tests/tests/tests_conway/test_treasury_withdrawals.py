@@ -1,6 +1,7 @@
 """Tests for Conway governance treasury withdrawals."""
 
 # pylint: disable=expression-not-assigned
+from itertools import chain
 import logging
 import typing as tp
 
@@ -30,10 +31,10 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture
-def pool_user_ug(
+def pool_users_ug(
     cluster_manager: cluster_management.ClusterManager,
     cluster_use_governance: governance_setup.GovClusterT,
-) -> clusterlib.PoolUser:
+) -> tp.List[clusterlib.PoolUser]:
     """Create a pool user for "use governance"."""
     cluster, __ = cluster_use_governance
     key = helpers.get_current_line_str()
@@ -43,6 +44,7 @@ def pool_user_ug(
         name_template=name_template,
         cluster_obj=cluster,
         caching_key=key,
+        no_of_users=30
     )
 
 
@@ -51,10 +53,10 @@ class TestTreasuryWithdrawals:
 
     @allure.link(helpers.get_vcs_link())
     @pytest.mark.long
-    def test_treasury_withdrawals(  # noqa: C901
+    def test_treasury_withdrawal(  # noqa: C901
         self,
         cluster_use_governance: governance_setup.GovClusterT,
-        pool_user_ug: clusterlib.PoolUser,
+        pool_users_ug: tp.List[clusterlib.PoolUser],
     ):
         """Test enactment of multiple treasury withdrawals in single epoch.
 
@@ -72,7 +74,7 @@ class TestTreasuryWithdrawals:
         # pylint: disable=too-many-locals,too-many-statements
         cluster, governance_data = cluster_use_governance
         temp_template = common.get_test_id(cluster)
-        actions_num = 3
+        total_participants = len(pool_users_ug)
 
         # Create stake address and registration certificate
         stake_deposit_amt = cluster.g_query.get_address_deposit()
@@ -98,22 +100,22 @@ class TestTreasuryWithdrawals:
 
         withdrawal_actions = [
             cluster.g_conway_governance.action.create_treasury_withdrawal(
-                action_name=f"{temp_template}_{a}",
+                action_name=f"{temp_template}_{i}",
                 transfer_amt=transfer_amt,
                 deposit_amt=action_deposit_amt,
-                anchor_url=f"http://www.withdrawal-action{a}.com",
+                anchor_url=f"http://www.withdrawal-action{i}.com",
                 anchor_data_hash=anchor_data_hash,
                 funds_receiving_stake_vkey_file=recv_stake_addr_rec.vkey_file,
-                deposit_return_stake_vkey_file=pool_user_ug.stake.vkey_file,
+                deposit_return_stake_vkey_file=pool_users_ug[i].stake.vkey_file,
             )
-            for a in range(actions_num)
+            for i in range(len(pool_users_ug))
         ]
         [r.success() for r in (reqc.cli015, reqc.cip031a_06, reqc.cip031f, reqc.cip054_05)]
 
         tx_files_action = clusterlib.TxFiles(
             certificate_files=[recv_stake_addr_reg_cert],
             proposal_files=[w.action_file for w in withdrawal_actions],
-            signing_key_files=[pool_user_ug.payment.skey_file, recv_stake_addr_rec.skey_file],
+            signing_key_files=[pool_user_ug.payment.skey_file for pool_user_ug in pool_users_ug ] +[recv_stake_addr_rec.skey_file],
         )
 
         if conway_common.is_in_bootstrap(cluster_obj=cluster):
@@ -121,7 +123,7 @@ class TestTreasuryWithdrawals:
                 clusterlib_utils.build_and_submit_tx(
                     cluster_obj=cluster,
                     name_template=f"{temp_template}_action_bootstrap",
-                    src_address=pool_user_ug.payment.address,
+                    src_address=pool_users_ug[0].payment.address,
                     use_build_cmd=True,
                     tx_files=tx_files_action,
                 )
@@ -133,11 +135,15 @@ class TestTreasuryWithdrawals:
         clusterlib_utils.wait_for_epoch_interval(
             cluster_obj=cluster, start=1, stop=common.EPOCH_STOP_SEC_BUFFER
         )
-
+        
+        address_utxos = [cluster.g_query.get_utxo(pool_user_ug.payment.address) for pool_user_ug in pool_users_ug]
+        flatenned_utxos = list(chain.from_iterable(address_utxos))
+        
         tx_output_action = clusterlib_utils.build_and_submit_tx(
             cluster_obj=cluster,
             name_template=f"{temp_template}_action",
-            src_address=pool_user_ug.payment.address,
+            src_address=pool_users_ug[0].payment.address,
+            txins=flatenned_utxos,
             submit_method=submit_utils.SubmitMethods.API
             if submit_utils.is_submit_api_available()
             else submit_utils.SubmitMethods.CLI,
@@ -149,18 +155,18 @@ class TestTreasuryWithdrawals:
             recv_stake_addr_rec.address
         ).address, f"Stake address is not registered: {recv_stake_addr_rec.address}"
 
-        actions_deposit_combined = action_deposit_amt * actions_num
+        actions_deposit_combined = action_deposit_amt * total_participants
 
         out_utxos_action = cluster.g_query.get_utxo(tx_raw_output=tx_output_action)
         assert (
-            clusterlib.filter_utxos(utxos=out_utxos_action, address=pool_user_ug.payment.address)[
+            clusterlib.filter_utxos(utxos=out_utxos_action, address=pool_users_ug[0].payment.address)[
                 0
             ].amount
             == clusterlib.calculate_utxos_balance(tx_output_action.txins)
             - tx_output_action.fee
             - actions_deposit_combined
             - stake_deposit_amt
-        ), f"Incorrect balance for source address `{pool_user_ug.payment.address}`"
+        ), f"Incorrect balance for source address `{pool_users_ug[0].payment.address}`"
 
         action_txid = cluster.g_transaction.get_txid(tx_body_file=tx_output_action.out_file)
         action_gov_state = cluster.g_conway_governance.query.gov_state()
@@ -169,7 +175,7 @@ class TestTreasuryWithdrawals:
             gov_state=action_gov_state, name_template=f"{temp_template}_action_{_cur_epoch}"
         )
 
-        for action_ix in range(actions_num):
+        for action_ix in range(total_participants):
             prop_action = governance_utils.lookup_proposal(
                 gov_state=action_gov_state, action_txid=action_txid, action_ix=action_ix
             )
@@ -185,7 +191,7 @@ class TestTreasuryWithdrawals:
             votes_cc = []
             votes_drep = []
             votes_spo = []
-            for action_ix in range(actions_num):
+            for action_ix in range(total_participants):
                 votes_cc.extend(
                     [
                         cluster.g_conway_governance.vote.create_committee(
@@ -223,7 +229,6 @@ class TestTreasuryWithdrawals:
                             for i, p in enumerate(governance_data.pools_cold, start=1)
                         ]
                     )
-
             votes: tp.List[governance_utils.VotesAllT] = [*votes_cc, *votes_drep, *votes_spo]
             spo_keys = [r.skey_file for r in governance_data.pools_cold] if votes_spo else []
             vote_keys = [
@@ -236,11 +241,15 @@ class TestTreasuryWithdrawals:
             clusterlib_utils.wait_for_epoch_interval(
                 cluster_obj=cluster, start=1, stop=common.EPOCH_STOP_SEC_BUFFER
             )
-
+            
+            print(len(governance_data.cc_members), " CC members are voting")
+            print(len(governance_data.dreps_reg), " DReps are voting")
+            print(len(governance_data.pools_cold), " SPOs are voting")
+            
             conway_common.submit_vote(
                 cluster_obj=cluster,
                 name_template=f"{temp_template}_{vote_id}",
-                payment_addr=pool_user_ug.payment,
+                payment_addr=pool_users_ug[0].payment,
                 votes=votes,
                 keys=vote_keys,
             )
@@ -252,7 +261,7 @@ class TestTreasuryWithdrawals:
                 name_template=f"{temp_template}_vote_{vote_id}_{_cur_epoch}",
             )
 
-            for action_ix in range(actions_num):
+            for action_ix in range(total_participants):
                 prop_vote = governance_utils.lookup_proposal(
                     gov_state=vote_gov_state, action_txid=action_txid, action_ix=action_ix
                 )
@@ -282,7 +291,7 @@ class TestTreasuryWithdrawals:
         # Check ratification
         xfail_ledger_3979_msgs = set()
         ratified_actions: tp.Set[int] = set()
-        remaining_actions: tp.Set[int] = set(range(actions_num))
+        remaining_actions: tp.Set[int] = set(range(total_participants))
         for __ in range(4):
             _cur_epoch = cluster.wait_for_new_epoch(padding_seconds=5)
             rat_gov_state = cluster.g_conway_governance.query.gov_state()
@@ -308,7 +317,7 @@ class TestTreasuryWithdrawals:
                 # rewrite in ledger code is finished.
                 xfail_ledger_3979_msgs.add("The action haven't got ratified")
 
-            remaining_actions = ratified_actions.symmetric_difference(range(actions_num))
+            remaining_actions = ratified_actions.symmetric_difference(range(total_participants))
             if not remaining_actions:
                 break
         else:
@@ -330,7 +339,7 @@ class TestTreasuryWithdrawals:
         _cur_epoch = cluster.wait_for_new_epoch(padding_seconds=5)
         assert (
             cluster.g_query.get_stake_addr_info(recv_stake_addr_rec.address).reward_account_balance
-            == transfer_amt * actions_num
+            == transfer_amt * total_participants
         ), "Incorrect reward account balance"
         [r.success() for r in (reqc.cip033, reqc.cip048)]
 
@@ -365,7 +374,7 @@ class TestTreasuryWithdrawals:
     def test_expire_treasury_withdrawals(
         self,
         cluster_use_governance: governance_setup.GovClusterT,
-        pool_user_ug: clusterlib.PoolUser,
+        pool_users_ug: clusterlib.PoolUser,
     ):
         """Test expiration of treasury withdrawals.
 
@@ -405,7 +414,7 @@ class TestTreasuryWithdrawals:
         action_deposit_amt = cluster.conway_genesis["govActionDeposit"]
         transfer_amt = 5_000_000_000
         init_return_account_balance = cluster.g_query.get_stake_addr_info(
-            pool_user_ug.stake.address
+            pool_users_ug[0].stake.address
         ).reward_account_balance
 
         anchor_data_hash = "5d372dca1a4cc90d7d16d966c48270e33e3aa0abcb0e78f0d5ca7ff330d2245d"
@@ -420,7 +429,7 @@ class TestTreasuryWithdrawals:
                 anchor_url=f"http://www.withdrawal-expire{a}.com",
                 anchor_data_hash=anchor_data_hash,
                 funds_receiving_stake_vkey_file=recv_stake_addr_rec.vkey_file,
-                deposit_return_stake_vkey_file=pool_user_ug.stake.vkey_file,
+                deposit_return_stake_vkey_file=pool_users_ug[0].stake.vkey_file,
             )
             for a in range(actions_num)
         ]
@@ -428,7 +437,7 @@ class TestTreasuryWithdrawals:
         tx_files_action = clusterlib.TxFiles(
             certificate_files=[recv_stake_addr_reg_cert],
             proposal_files=[w.action_file for w in withdrawal_actions],
-            signing_key_files=[pool_user_ug.payment.skey_file, recv_stake_addr_rec.skey_file],
+            signing_key_files=[pool_users_ug[0].payment.skey_file, recv_stake_addr_rec.skey_file],
         )
 
         actions_deposit_combined = action_deposit_amt * len(withdrawal_actions)
@@ -438,7 +447,7 @@ class TestTreasuryWithdrawals:
                 clusterlib_utils.build_and_submit_tx(
                     cluster_obj=cluster,
                     name_template=f"{temp_template}_action_bootstrap",
-                    src_address=pool_user_ug.payment.address,
+                    src_address=pool_users_ug[0].payment.address,
                     tx_files=tx_files_action,
                     deposit=actions_deposit_combined + stake_deposit_amt,
                 )
@@ -456,7 +465,7 @@ class TestTreasuryWithdrawals:
         tx_output_action = clusterlib_utils.build_and_submit_tx(
             cluster_obj=cluster,
             name_template=f"{temp_template}_action",
-            src_address=pool_user_ug.payment.address,
+            src_address=pool_users_ug[0].payment.address,
             tx_files=tx_files_action,
             deposit=actions_deposit_combined + stake_deposit_amt,
         )
@@ -468,14 +477,14 @@ class TestTreasuryWithdrawals:
 
         out_utxos_action = cluster.g_query.get_utxo(tx_raw_output=tx_output_action)
         assert (
-            clusterlib.filter_utxos(utxos=out_utxos_action, address=pool_user_ug.payment.address)[
+            clusterlib.filter_utxos(utxos=out_utxos_action, address=pool_users_ug[0].payment.address)[
                 0
             ].amount
             == clusterlib.calculate_utxos_balance(tx_output_action.txins)
             - tx_output_action.fee
             - actions_deposit_combined
             - stake_deposit_amt
-        ), f"Incorrect balance for source address `{pool_user_ug.payment.address}`"
+        ), f"Incorrect balance for source address `{pool_users_ug[0].payment.address}`"
 
         action_txid = cluster.g_transaction.get_txid(tx_body_file=tx_output_action.out_file)
         action_gov_state = cluster.g_conway_governance.query.gov_state()
@@ -545,7 +554,7 @@ class TestTreasuryWithdrawals:
         conway_common.submit_vote(
             cluster_obj=cluster,
             name_template=temp_template,
-            payment_addr=pool_user_ug.payment,
+            payment_addr=pool_users_ug[0].payment,
             votes=votes,
             keys=vote_keys,
             submit_method=submit_utils.SubmitMethods.API
@@ -610,7 +619,7 @@ class TestTreasuryWithdrawals:
             == 0
         ), "Incorrect reward account balance"
         expire_return_account_balance = cluster.g_query.get_stake_addr_info(
-            pool_user_ug.stake.address
+            pool_users_ug[0].stake.address
         ).reward_account_balance
         assert (
             expire_return_account_balance == init_return_account_balance
@@ -623,7 +632,7 @@ class TestTreasuryWithdrawals:
             gov_state=rem_gov_state, name_template=f"{temp_template}_rem_{_cur_epoch}"
         )
         rem_deposit_returned = cluster.g_query.get_stake_addr_info(
-            pool_user_ug.stake.address
+            pool_users_ug[0].stake.address
         ).reward_account_balance
 
         # Known ledger issue where only one expired action gets removed in one epoch
