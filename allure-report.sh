@@ -1,0 +1,1 @@
+allure serve allure-results/allure-committee/ allure-results/allure-constitution/ allure-results/allure-drep/ allure-results/allure-hardfork/ allure-results/allure-info/ allure-results/allure-no-confidence/ allure-results/allure-pparams/ allure-results/allure-treasury-withdrawal/
