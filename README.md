@@ -75,7 +75,10 @@
     ```sh
     ./dev_workdir/babbage_fast/stop-cluster
     ```
+
+
 ### To view test results
-    ```sh
+
+- ```sh
     ./cardano_node_tests/tests/tests_conway/allure_report.sh
-    ```
+    ```    
