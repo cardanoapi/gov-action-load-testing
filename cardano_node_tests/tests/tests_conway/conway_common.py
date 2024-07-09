@@ -1,6 +1,7 @@
 """Common functionality for Conway governance tests."""
 
 import dataclasses
+from enum import Enum
 from itertools import chain
 import json
 import logging
@@ -224,6 +225,165 @@ def register_pool_users(
                 pool_user.stake.address
             ).address, f"Stake address is not registered: {pool_user.stake.address}"
 
+class Votes(Enum):
+    MAJORITY = "majority"
+    EQUAL = "equal"
+    INSUFFICIENT = "insufficient"
+
+def _cast_vote(
+    temp_template: str, 
+    action_ix: int,
+    action_txid, 
+    governance_data,
+    cluster,
+    pool_user,
+    vote: Votes,
+    vote_spo: bool = False,
+    vote_drep: bool = False, 
+    vote_cc: bool = False, 
+) -> governance_utils.VotedVotes:
+    votes_cc = []
+    votes_drep = []
+    votes_spo = []
+    pools_cold = governance_data.pools_cold
+    dreps_reg = governance_data.dreps_reg
+    cc_members = governance_data.cc_members
+    
+    def calculate_yes_count(entities, vote):
+        if vote == Votes.MAJORITY:
+            return (len(entities)) // 2 + 2
+        elif vote == Votes.EQUAL:
+            return (len(entities) + 1) // 2  # handles both even and odd cases
+        elif vote == Votes.INSUFFICIENT:
+            return len(entities) // 2 - 2
+        else:
+            raise ValueError(f"Unknown vote type: {vote}")
+
+    lazy = []
+    def distribute_votes(vote_list, entities, vote_name_prefix, create_vote_func):
+        yes_count = calculate_yes_count(entities, vote)
+        for i, entity in enumerate(entities, start=1):
+            if vote_name_prefix == "pool":
+                key_attr = ("cold_vkey_file", entity.vkey_file)
+            elif vote_name_prefix == "drep":
+                key_attr = ("drep_vkey_file",entity.key_pair.vkey_file)
+            elif vote_name_prefix == "cc":
+                key_attr = ("cc_hot_vkey_file",entity.hot_vkey_file)
+            vote_choice = clusterlib.Votes.YES if i <= yes_count else clusterlib.Votes.NO
+            lazy_vote_choice = "YES" if i <= yes_count else "NO"
+            if vote_name_prefix == "cc":
+                 lazy.append(lazy_vote_choice)
+            vote_list.append(
+                create_vote_func(
+                    vote_name=f"{temp_template}_{action_txid}#{action_ix}_{vote_name_prefix}{i}",
+                    action_txid=action_txid,
+                    action_ix=action_ix,
+                    vote=vote_choice,
+                    **{key_attr[0]: key_attr[1]}
+                )
+            )
+
+    if vote_spo: 
+        distribute_votes(
+            votes_spo, 
+            pools_cold, 
+            "pool",
+            cluster.g_conway_governance.vote.create_spo,
+        )
+        
+    if vote_drep:
+        distribute_votes(
+            votes_drep, 
+            dreps_reg, 
+            "drep",
+            cluster.g_conway_governance.vote.create_drep,
+        )
+        
+    if vote_cc:
+        distribute_votes(
+            votes_cc, 
+            cc_members, 
+            "cc",
+            cluster.g_conway_governance.vote.create_committee,
+            )
+    cc_hot_skey_files = [r.hot_skey_file for r in cc_members] if votes_cc else []
+    drep_reg_skey_files = [r.key_pair.skey_file for r in dreps_reg] if votes_drep else []
+    spo_keys = [r.skey_file for r in governance_data.pools_cold] if votes_spo else []
+
+    # Make sure we have enough time to submit the votes in one epoch
+    clusterlib_utils.wait_for_epoch_interval(
+        cluster_obj=cluster, start=1, stop=common.EPOCH_STOP_SEC_BUFFER
+    )
+
+    # submit cc votes
+    submit_vote_(
+        cluster_obj=cluster,
+        name_template=f"{temp_template}",
+        payment_addr=pool_user.payment,
+        votes=votes_cc,
+        keys=cc_hot_skey_files,
+    )
+    # submit drep votes
+    submit_vote_(
+        cluster_obj=cluster,
+        name_template=f"{temp_template}",
+        payment_addr=pool_user.payment,
+        votes=votes_drep,
+        keys=drep_reg_skey_files,
+    )
+    # submit spo votes
+    submit_vote_(
+        cluster_obj=cluster,
+        name_template=f"{temp_template}",
+        payment_addr=pool_user.payment,
+        votes=votes_spo,
+        keys=spo_keys,
+    )
+    
+    vote_gov_state = cluster.g_conway_governance.query.gov_state()
+    _cur_epoch = cluster.g_query.get_epoch()
+    save_gov_state(
+        gov_state=vote_gov_state,
+        name_template=f"{temp_template}_vote_{_cur_epoch}",
+    )
+    return governance_utils.VotedVotes(cc=votes_cc, drep=votes_drep, spo=votes_spo)
+
+def submit_vote_(
+    cluster_obj: clusterlib.ClusterLib,
+    name_template: str,
+    payment_addr: clusterlib.AddressRecord,
+    votes: tp.List[governance_utils.VotesAllT],
+    keys: tp.List[clusterlib.FileType],
+    submit_method: str = "",
+    use_build_cmd: bool = False,
+)-> tp.List[clusterlib.TxRawOutput]:
+    """Submit a Tx with votes in chunks of 60."""
+    
+    def divide_list_into_sublists(m_list, n):
+        if n==0 or m_list==[]: 
+            return [m_list]
+        result = [m_list[i:i + n] for i in range(0, len(m_list), n)]
+        return result
+    
+    total_keys= len(keys)
+    vote_chunks= divide_list_into_sublists(votes, total_keys)
+    tx_outputs=[]
+    for vote_chunk in vote_chunks: 
+        tx_outputs.append(
+            submit_vote
+            (
+                cluster_obj,
+                name_template,
+                payment_addr,
+                vote_chunk,
+                keys,
+                submit_method,
+                use_build_cmd
+            )
+        )
+    
+    return [*tx_outputs]
+        
 def submit_vote(
     cluster_obj: clusterlib.ClusterLib,
     name_template: str,
@@ -233,7 +393,7 @@ def submit_vote(
     submit_method: str = "",
     use_build_cmd: bool = False,
     chunk_size: int = 60,
-) -> clusterlib.TxRawOutput:
+) -> tp.List[clusterlib.TxRawOutput]:
     """Submit a Tx with votes in chunks of 60."""
     tx_outputs = []
     num_votes = len(votes)
@@ -355,7 +515,7 @@ def cast_vote(
         cluster_obj=cluster_obj, start=1, stop=common.EPOCH_STOP_SEC_BUFFER
     )
 
-    submit_vote(
+    submit_vote_(
         cluster_obj=cluster_obj,
         name_template=name_template,
         payment_addr=payment_addr,
@@ -426,9 +586,6 @@ def resign_ccs(
 def propose_change_constitution(
     cluster_obj: clusterlib.ClusterLib,
     name_template: str,
-    anchor_url: str,
-    anchor_data_hash: str,
-    constitution_url: str,
     constitution_hash: str,
     pool_users: tp.List[clusterlib.PoolUser],
 ) -> tp.Tuple[clusterlib.ActionConstitution, str, int]:
@@ -442,11 +599,11 @@ def propose_change_constitution(
 
     constitution_actions = [
         cluster_obj.g_conway_governance.action.create_constitution(
-            action_name=name_template,
+            action_name=f"{name_template}_{i}",
             deposit_amt=deposit_amt,
-            anchor_url=anchor_url,
-            anchor_data_hash=anchor_data_hash,
-            constitution_url=constitution_url,
+            anchor_url=f"http://www.const-action-{i}.com",
+            anchor_data_hash=cluster_obj.g_conway_governance.get_anchor_data_hash(text=f"http://www.const-action-{i}.com"),
+            constitution_url=f"http://www.const-new-{i}.com",
             constitution_hash=constitution_hash,
             prev_action_txid=prev_action_rec.txid,
             prev_action_ix=prev_action_rec.ix,
@@ -476,9 +633,10 @@ def propose_change_constitution(
     )
 
     out_utxos = cluster_obj.g_query.get_utxo(tx_raw_output=tx_output)
+    combined_deposit_amt = deposit_amt * len(constitution_actions)
     assert (
         clusterlib.filter_utxos(utxos=out_utxos, address=pool_users[0].payment.address)[0].amount
-        == clusterlib.calculate_utxos_balance(tx_output.txins) - tx_output.fee - deposit_amt
+        == clusterlib.calculate_utxos_balance(tx_output.txins) - tx_output.fee - combined_deposit_amt
     ), f"Incorrect balance for source address `{pool_users[0].payment.address}`"
 
     action_txid = cluster_obj.g_transaction.get_txid(tx_body_file=tx_output.out_file)
@@ -488,17 +646,18 @@ def propose_change_constitution(
         gov_state=action_gov_state,
         name_template=f"{name_template}_constitution_action_{_cur_epoch}",
     )
-    prop_action = governance_utils.lookup_proposal(
-        gov_state=action_gov_state, action_txid=action_txid
-    )
-    assert prop_action, "Create constitution action not found"
-    assert (
-        prop_action["proposalProcedure"]["govAction"]["tag"]
-        == governance_utils.ActionTags.NEW_CONSTITUTION.value
-    ), "Incorrect action tag"
-
-    action_ix = prop_action["actionId"]["govActionIx"]
-    return constitution_actions, action_txid, action_ix
+    action_ixs = []
+    for acction_ix in range(len(constitution_actions)):
+        prop_action = governance_utils.lookup_proposal(
+            gov_state=action_gov_state, action_txid=action_txid, action_ix=acction_ix
+        )
+        assert prop_action, "Create constitution action not found"
+        assert (
+            prop_action["proposalProcedure"]["govAction"]["tag"]
+            == governance_utils.ActionTags.NEW_CONSTITUTION.value
+        ), "Incorrect action tag"
+        action_ixs.append(prop_action["actionId"]["govActionIx"])
+    return constitution_actions, action_txid, action_ixs
 
 
 def propose_pparams_update(
@@ -514,7 +673,7 @@ def propose_pparams_update(
     """Propose a pparams update."""
     deposit_amt = cluster_obj.conway_genesis["govActionDeposit"]
     selected_pool_users = pool_users[:num_pool_users]
-    
+    total_participants = len(selected_pool_users)
     prev_action_rec = prev_action_rec or governance_utils.get_prev_action(
         action_type=governance_utils.PrevGovActionIds.PPARAM_UPDATE,
         gov_state=cluster_obj.g_conway_governance.query.gov_state(),
@@ -523,18 +682,18 @@ def propose_pparams_update(
     update_args = clusterlib_utils.get_pparams_update_args(update_proposals=proposals)
     pparams_actions = [
         cluster_obj.g_conway_governance.action.create_pparams_update(
-            action_name=name_template,
+            action_name=f"{name_template}_{i}",
             deposit_amt=deposit_amt,
             anchor_url=anchor_url,
             anchor_data_hash=anchor_data_hash,
             cli_args=update_args,
             prev_action_txid=prev_action_rec.txid,
             prev_action_ix=prev_action_rec.ix,
-            deposit_return_stake_vkey_file=pool_user.stake.vkey_file,
+            deposit_return_stake_vkey_file=selected_pool_users[i].stake.vkey_file,
         )
-        for pool_user in selected_pool_users
+        for i in range(total_participants)
     ]
-    print(f"\n{len(pparams_actions)} proposals with {len(update_args)} args for protocol-params action are being submitted in a single transaction")
+    print(f"\n{len(pparams_actions)} proposals with {len(update_args)} args for protocol-params update action are being submitted in a single transaction")
     tx_files_action = clusterlib.TxFiles(
         proposal_files=[pparams_action.action_file for pparams_action in pparams_actions],
         signing_key_files=[pool_user.payment.skey_file for pool_user in selected_pool_users],
@@ -556,33 +715,39 @@ def propose_pparams_update(
     )
 
     out_utxos_action = cluster_obj.g_query.get_utxo(tx_raw_output=tx_output_action)
+    combined_deposit_amt = deposit_amt * total_participants
     assert (
         clusterlib.filter_utxos(utxos=out_utxos_action, address=selected_pool_users[0].payment.address)[0].amount
         == clusterlib.calculate_utxos_balance(tx_output_action.txins)
         - tx_output_action.fee
-        - deposit_amt
+        - combined_deposit_amt
     ), f"Incorrect balance for source address `{selected_pool_users[0].payment.address}`"
 
     action_txid = cluster_obj.g_transaction.get_txid(tx_body_file=tx_output_action.out_file)
     action_gov_state = cluster_obj.g_conway_governance.query.gov_state()
     _cur_epoch = cluster_obj.g_query.get_epoch()
     save_gov_state(gov_state=action_gov_state, name_template=f"{name_template}_action_{_cur_epoch}")
-    prop_action = governance_utils.lookup_proposal(
-        gov_state=action_gov_state, action_txid=action_txid
-    )
-    assert prop_action, "Param update action not found"
-    assert (
-        prop_action["proposalProcedure"]["govAction"]["tag"]
-        == governance_utils.ActionTags.PARAMETER_CHANGE.value
-    ), "Incorrect action tag"
+    
+    for action_ix in range(len(pparams_actions)):
+        prop_action = governance_utils.lookup_proposal(
+            gov_state=action_gov_state, action_txid=action_txid, action_ix=action_ix
+        )
+        assert prop_action, "Param update action not found"
+        assert (
+            prop_action["proposalProcedure"]["govAction"]["tag"]
+            == governance_utils.ActionTags.PARAMETER_CHANGE.value
+        ), "Incorrect action tag"
 
     action_ix = prop_action["actionId"]["govActionIx"]
     proposal_names = {p.name for p in proposals}
 
-    return PParamPropRec(
-        proposals=proposals,
-        action_txid=action_txid,
-        action_ix=action_ix,
-        proposal_names=proposal_names,
-        future_pparams=prop_action["proposalProcedure"]["govAction"]["contents"][1],
-    )
+    pparamPropRecs = []
+    for action_ix  in range(total_participants):
+        pparamPropRecs.append(PParamPropRec(
+            proposals=proposals,
+            action_txid=action_txid,
+            action_ix=action_ix,
+            proposal_names=proposal_names,
+            future_pparams=prop_action["proposalProcedure"]["govAction"]["contents"][1],
+        ))
+    return pparamPropRecs

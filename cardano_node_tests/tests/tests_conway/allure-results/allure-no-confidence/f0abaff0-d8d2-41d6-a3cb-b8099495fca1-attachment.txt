@@ -1,0 +1,6 @@
+
+3 proposals for no-confidence action are being submitted in a single transaction
+100  DReps are voting
+3  SPOs are voting
+
+enact_deposits_returned after cc votes disapproval:  [2000000, 0, 0]

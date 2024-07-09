@@ -134,4 +134,5 @@ markers = [
     "smoke: fast test(s) under 1 minute",
     "upgrade: test(s) for upgrade testing",
     "plutus: test(s) for plutus",
+    "load_test: test(s) for governance action load testing",
 ]

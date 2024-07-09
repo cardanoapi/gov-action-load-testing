@@ -1,0 +1,3 @@
+[32mINFO    [0m cardano_node_tests.tests.conftest:conftest.py:188 Changed CWD to '/tmp/nix-shell.L371jz/pytest-of-rishav/pytest-60'.
+[32mINFO    [0m cardano_clusterlib.clusterlib_klass:clusterlib_klass.py:372 Waiting for 73.40 sec for slot no 1025.
+[32mINFO    [0m cardano_clusterlib.clusterlib_klass:clusterlib_klass.py:372 Waiting for 204.60 sec for slot no 4025.

@@ -21,7 +21,7 @@
   "committeeMinSize": 0,
   "committeeMaxTermLength": 11000,
   "govActionLifetime": 2,
-  "govActionDeposit": 100000000,
+  "govActionDeposit": 2000000,
   "dRepDeposit": 2000000,
   "dRepActivity": 100,
   "minFeeRefScriptCostPerByte": 0,
