@@ -152,99 +152,98 @@ class TestCommittee:
                 use_build_cmd=use_build_cmd,
                 tx_files=tx_files_auth,
             )
+            reqc.cip003.success()
+
+            auth_out_utxos = cluster.g_query.get_utxo(tx_raw_output=tx_output_auth)
+            assert (
+                clusterlib.filter_utxos(utxos=auth_out_utxos, address=payment_addr_comm.address)[
+                    0
+                ].amount
+                == clusterlib.calculate_utxos_balance(tx_output_auth.txins) - tx_output_auth.fee
+            ), f"Incorrect balance for source address `{payment_addr_comm.address}`"
+
+            cluster.wait_for_new_block(new_blocks=2)
+            _url = helpers.get_vcs_link()
+            [r.start(url=_url) for r in (reqc.cli032, reqc.cip002, reqc.cip004)]
+            auth_committee_state = cluster.g_conway_governance.query.committee_state()
+            member_keys = [f"keyHash-{cc_auth_record.key_hash}" for cc_auth_record in cc_auth_records]
+            member_recs = [auth_committee_state["committee"][member_key] for member_key in member_keys ]
+
+            for member_rec in member_recs:
+                assert (
+                    member_rec["hotCredsAuthStatus"]["tag"] == "MemberAuthorized"
+                ), "CC Member was NOT authorized"
+                assert not member_rec["expiration"], "CC Member should not be elected"
+                assert member_rec["status"] == "Unrecognized", "CC Member should not be recognized"
+            [r.success() for r in (reqc.cli032, reqc.cip002, reqc.cip004)]
+
+            # Resignation of CC Member
+
+            _url = helpers.get_vcs_link()
+            [r.start(url=_url) for r in (reqc.cli007, reqc.cip012)]
+            
+            res_certs = [
+                cluster.g_conway_governance.committee.gen_cold_key_resignation_cert(
+                    key_name=f"{temp_template}_{i}",
+                    cold_vkey_file=cc_auth_records[i].cold_key_pair.vkey_file,
+                    resignation_metadata_url=f"http://www.cc-resign-{i}.com",
+                    resignation_metadata_hash="5d372dca1a4cc90d7d16d966c48270e33e3aa0abcb0e78f0d5ca7ff330d2245d",
+                )
+                for i in range(cc_size)
+            ]
+            reqc.cli007.success()
+
+            tx_files_res = clusterlib.TxFiles(
+                certificate_files=res_certs,
+                signing_key_files=[payment_addr_comm.skey_file] + cold_skey_files,
+            )
+            print(f"\nResigning {cc_size} Committee members at once.")
+            try:
+                tx_output_res = clusterlib_utils.build_and_submit_tx(
+                    cluster_obj=cluster,
+                    name_template=f"{temp_template}_res",
+                    src_address=payment_addr_comm.address,
+                    use_build_cmd=use_build_cmd,
+                    tx_files=tx_files_res,
+                )
+            except clusterlib.CLIError as exc:
+                err_str = str(exc)
+                if "MaxTxSizeUTxO" in err_str:
+                    print(f"Fails at resigning {cc_size} CC members in a single transaction")
+                    return
+
+            cluster.wait_for_new_block(new_blocks=2)
+            res_committee_state = cluster.g_conway_governance.query.committee_state()
+            res_member_recs = [res_committee_state["committee"].get(member_key) for member_key in member_keys]
+
+            for res_member_rec in res_member_recs:
+                assert (
+                    not res_member_rec or res_member_rec["hotCredsAuthStatus"]["tag"] == "MemberResigned"
+                ), "CC Member not resigned"
+
+            reqc.cip012.success()
+
+            res_out_utxos = cluster.g_query.get_utxo(tx_raw_output=tx_output_res)
+            assert (
+                clusterlib.filter_utxos(utxos=res_out_utxos, address=payment_addr_comm.address)[
+                    0
+                ].amount
+                == clusterlib.calculate_utxos_balance(tx_output_res.txins) - tx_output_res.fee
+            ), f"Incorrect balance for source address `{payment_addr_comm.address}`"
+
+            # Check CC member in db-sync
+            for cc_auth_record in cc_auth_records:
+                dbsync_utils.check_committee_member_registration(
+                    cc_member_cold_key=cc_auth_record.key_hash, committee_state=auth_committee_state
+                )
+                dbsync_utils.check_committee_member_deregistration(
+                    cc_member_cold_key=cc_auth_record.key_hash
+                )        
         except clusterlib.CLIError as exc:
             err_str = str(exc)
             if "MaxTxSizeUTxO" in err_str:
                 print(f"Fails at registering {cc_size} CC members in a single transaction")
                 return
-        reqc.cip003.success()
-
-        auth_out_utxos = cluster.g_query.get_utxo(tx_raw_output=tx_output_auth)
-        assert (
-            clusterlib.filter_utxos(utxos=auth_out_utxos, address=payment_addr_comm.address)[
-                0
-            ].amount
-            == clusterlib.calculate_utxos_balance(tx_output_auth.txins) - tx_output_auth.fee
-        ), f"Incorrect balance for source address `{payment_addr_comm.address}`"
-
-        cluster.wait_for_new_block(new_blocks=2)
-        _url = helpers.get_vcs_link()
-        [r.start(url=_url) for r in (reqc.cli032, reqc.cip002, reqc.cip004)]
-        auth_committee_state = cluster.g_conway_governance.query.committee_state()
-        member_keys = [f"keyHash-{cc_auth_record.key_hash}" for cc_auth_record in cc_auth_records]
-        member_recs = [auth_committee_state["committee"][member_key] for member_key in member_keys ]
-
-        for member_rec in member_recs:
-            assert (
-                member_rec["hotCredsAuthStatus"]["tag"] == "MemberAuthorized"
-            ), "CC Member was NOT authorized"
-            assert not member_rec["expiration"], "CC Member should not be elected"
-            assert member_rec["status"] == "Unrecognized", "CC Member should not be recognized"
-        [r.success() for r in (reqc.cli032, reqc.cip002, reqc.cip004)]
-
-        # Resignation of CC Member
-
-        _url = helpers.get_vcs_link()
-        [r.start(url=_url) for r in (reqc.cli007, reqc.cip012)]
-        
-        res_certs = [
-            cluster.g_conway_governance.committee.gen_cold_key_resignation_cert(
-                key_name=f"{temp_template}_{i}",
-                cold_vkey_file=cc_auth_records[i].cold_key_pair.vkey_file,
-                resignation_metadata_url=f"http://www.cc-resign-{i}.com",
-                resignation_metadata_hash="5d372dca1a4cc90d7d16d966c48270e33e3aa0abcb0e78f0d5ca7ff330d2245d",
-            )
-            for i in range(cc_size)
-        ]
-        reqc.cli007.success()
-
-        tx_files_res = clusterlib.TxFiles(
-            certificate_files=res_certs,
-            signing_key_files=[payment_addr_comm.skey_file] + cold_skey_files,
-        )
-        print(f"\nResigning {cc_size} Committee members at once.")
-        try:
-            tx_output_res = clusterlib_utils.build_and_submit_tx(
-                cluster_obj=cluster,
-                name_template=f"{temp_template}_res",
-                src_address=payment_addr_comm.address,
-                use_build_cmd=use_build_cmd,
-                tx_files=tx_files_res,
-            )
-        except clusterlib.CLIError as exc:
-            err_str = str(exc)
-            if "MaxTxSizeUTxO" in err_str:
-                print(f"Fails at resigning {cc_size} CC members in a single transaction")
-                return
-
-        cluster.wait_for_new_block(new_blocks=2)
-        res_committee_state = cluster.g_conway_governance.query.committee_state()
-        res_member_recs = [res_committee_state["committee"].get(member_key) for member_key in member_keys]
-
-        for res_member_rec in res_member_recs:
-            assert (
-                not res_member_rec or res_member_rec["hotCredsAuthStatus"]["tag"] == "MemberResigned"
-            ), "CC Member not resigned"
-
-        reqc.cip012.success()
-
-        res_out_utxos = cluster.g_query.get_utxo(tx_raw_output=tx_output_res)
-        assert (
-            clusterlib.filter_utxos(utxos=res_out_utxos, address=payment_addr_comm.address)[
-                0
-            ].amount
-            == clusterlib.calculate_utxos_balance(tx_output_res.txins) - tx_output_res.fee
-        ), f"Incorrect balance for source address `{payment_addr_comm.address}`"
-
-        # Check CC member in db-sync
-        for cc_auth_record in cc_auth_records:
-            dbsync_utils.check_committee_member_registration(
-                cc_member_cold_key=cc_auth_record.key_hash, committee_state=auth_committee_state
-            )
-            dbsync_utils.check_committee_member_deregistration(
-                cc_member_cold_key=cc_auth_record.key_hash
-            )
-        cluster.wait_for_new_epoch()
 
     @allure.link(helpers.get_vcs_link())
     @common.PARAM_USE_BUILD_CMD

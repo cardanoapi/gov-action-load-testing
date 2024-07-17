@@ -53,6 +53,7 @@ def get_payment_addr(
         addr,
         cluster_obj=cluster_obj,
         faucet_data=cluster_manager.cache.addrs_data["user1"],
+        amount=1000000000000
     )
 
     return addr
@@ -112,7 +113,7 @@ def pool_users(
     test_id = common.get_test_id(cluster)
     key = helpers.get_current_line_str()
     return get_pool_user(
-        name_template=test_id, cluster_manager=cluster_manager, cluster_obj=cluster, caching_key=key, no_of_users=1000
+        name_template=test_id, cluster_manager=cluster_manager, cluster_obj=cluster, caching_key=key, no_of_users=10000
     )
 
 # register DReps
@@ -238,7 +239,7 @@ class TestMassAbstain:
     ):
         """Test mass abstain delegating to DReps.
 
-        * register 990 stake addresses that will delegate to abstain
+        * register 9990 stake addresses that will delegate to abstain
         * register 10 stake addresses that will delegate to the 10 DReps
         * check that the stake addresses are registered
         * check that stake addresses delegated to the correct DReps
@@ -391,7 +392,7 @@ class TestMassAbstain:
         ):
         """Test delegated DReps vote on an update committee action.
 
-        * create an udpate committee action
+        * create an udpate committee threshold action
         * 10 registered DReps and 3 SPOs cast vote
         * check that the action is ratified
         """
@@ -405,7 +406,10 @@ class TestMassAbstain:
         for delegatee in delegatees: 
             amount = cluster.g_query.get_address_balance(delegatee.payment.address)
             assert amount, "Delegatee has 0 balance"
-        
+
+        # Get the current script's directory
+        script_dir = pl.Path(__file__).parent.parent.parent.parent
+                
         temp_template = common.get_test_id(cluster)
         deposit_amt = cluster.conway_genesis["govActionDeposit"]
         prev_action_rec = governance_utils.get_prev_action(
@@ -414,23 +418,6 @@ class TestMassAbstain:
         )
         cc_size = 7
         threshold = "2/3"
-        cc_auth_records = [
-            governance_utils.get_cc_member_auth_record(
-                cluster_obj=cluster,
-                name_template=f"{temp_template}_{i}",
-            )
-            for i in range(1, cc_size + 1)
-        ]
-        cc_members = [
-            clusterlib.CCMember(
-                epoch=10_000,
-                cold_vkey_file=r.cold_key_pair.vkey_file,
-                cold_skey_file=r.cold_key_pair.skey_file,
-                hot_vkey_file=r.hot_key_pair.vkey_file,
-                hot_skey_file=r.hot_key_pair.skey_file,
-            )
-            for r in cc_auth_records
-        ]
         
         reqc.cip031a_01.start(url=helpers.get_vcs_link())
         update_action = cluster.g_conway_governance.action.update_committee(
@@ -439,18 +426,15 @@ class TestMassAbstain:
                 anchor_url=f"http://www.cc-threshold-update.com",
                 anchor_data_hash="5d372dca1a4cc90d7d16d966c48270e33e3aa0abcb0e78f0d5ca7ff330d2245d",
                 threshold=threshold,
-                add_cc_members = cc_members,
                 prev_action_txid=prev_action_rec.txid,
                 prev_action_ix=prev_action_rec.ix,
                 deposit_return_stake_vkey_file=pool_user.stake.vkey_file,
             )
         reqc.cip031a_01.success()
         tx_file = clusterlib.TxFiles(
-            certificate_files=[r.auth_cert for r in cc_auth_records],
             proposal_files = [update_action.action_file],
-            signing_key_files  = [
-                *[r.cold_key_pair.skey_file for r in cc_auth_records],
-            ] + [pool_user.payment.skey_file, payment_addr.skey_file] 
+            signing_key_files  = 
+                [pool_user.payment.skey_file, payment_addr.skey_file] 
         )
         if conway_common.is_in_bootstrap(cluster_obj=cluster):
             with pytest.raises((clusterlib.CLIError, submit_api.SubmitApiError)) as excinfo:
@@ -485,17 +469,11 @@ class TestMassAbstain:
                     prop["proposalProcedure"]["govAction"]["tag"]
                     == governance_utils.ActionTags.UPDATE_COMMITTEE.value
                 ), "Incorrect action tag"
-        cc_key_hashes = {f"keyHash-{c.key_hash}" for c in cc_auth_records}
-        prop_cc_key_hashes = set(prop["proposalProcedure"]["govAction"]["contents"][2].keys())
-        assert cc_key_hashes == prop_cc_key_hashes, "Incorrect CC key hashes"
         
         # dreps cast vote
-        
-        # Get the current script's directory
-        script_dir = pl.Path(__file__).parent.parent.parent.parent
+
         # Define the relative path for drep_certs
         drep_cred_path = script_dir / "cardano_node_tests/tests/drep_certs"
-        print("\ndrep_cred_path: ", drep_cred_path) 
         drep_vkey_files = list(drep_cred_path.glob("*.vkey"))
         drep_skey_files = list(drep_cred_path.glob("*.skey"))
         dreps = json.loads(helpers.run_command("cardano-cli conway query drep-state --all-dreps --testnet-magic 42"))
