@@ -1,30 +1,10 @@
 "Status","Start Time","Stop Time","Duration in ms","Parent Suite","Suite","Sub Suite","Test Class","Test Method","Name","Description"
-"passed","Mon Jul 08 22:12:19 NPT 2024","Mon Jul 08 22:12:23 NPT 2024","4062","cardano_node_tests.tests.tests_conway","test_committee","TestCommittee","","","test_update_committee_action_insufficient[build_raw]","Test update committee action.
-
-        * create 3 proposals to add CC Members with different thresholds 
-        * vote insufficiently to disapprove all proposals
-        * check that the proposed changes are not ratified or enacted
-        "
-"passed","Mon Jul 08 22:05:43 NPT 2024","Mon Jul 08 22:05:48 NPT 2024","4049","cardano_node_tests.tests.tests_conway","test_committee","TestCommittee","","","test_update_committee_action_equal[build_raw]","Test update committee action.
-
-        * create 3 proposals to add CC Members with different thresholds 
-        * vote insufficiently to disapprove action 3
-        * vote majority equally on actions 1 and 2
-        * check that the first action on the proposal list with enough votes is enacted 
-        "
-"passed","Mon Jul 08 21:59:07 NPT 2024","Mon Jul 08 22:05:43 NPT 2024","396082","cardano_node_tests.tests.tests_conway","test_committee","TestCommittee","","","test_update_committee_action_majority[build]","Test update committee action.
+"passed","Mon Jul 08 21:59:03 NPT 2024","Mon Jul 08 21:59:07 NPT 2024","4045","cardano_node_tests.tests.tests_conway","test_committee","TestCommittee","","","test_update_committee_action_majority[build_raw]","Test update committee action.
 
         * create 3 proposals to add CC Members with different thresholds 
         * vote majority to approve action 3
         * vote insufficiently to disapprove actions 1 and 2
         * check that action 3 is ratified and enacted 
-        "
-"passed","Mon Jul 08 21:54:22 NPT 2024","Mon Jul 08 21:55:34 NPT 2024","71711","cardano_node_tests.tests.tests_conway","test_committee","TestCommittee","","","test_register_and_resign_committee_member[build_raw]","Test Constitutional Committee Member registration and resignation.
-
-        * register a potential CC Member
-        * check that CC Member was registered
-        * resign from CC Member position
-        * check that CC Member resigned
         "
 "passed","Mon Jul 08 22:05:48 NPT 2024","Mon Jul 08 22:12:18 NPT 2024","390567","cardano_node_tests.tests.tests_conway","test_committee","TestCommittee","","","test_update_committee_action_equal[build]","Test update committee action.
 
@@ -33,6 +13,32 @@
         * vote majority equally on actions 1 and 2
         * check that the first action on the proposal list with enough votes is enacted 
         "
+"passed","Mon Jul 08 22:12:23 NPT 2024","Mon Jul 08 22:18:59 NPT 2024","396359","cardano_node_tests.tests.tests_conway","test_committee","TestCommittee","","","test_update_committee_action_insufficient[build]","Test update committee action.
+
+        * create 3 proposals to add CC Members with different thresholds 
+        * vote insufficiently to disapprove all proposals
+        * check that the proposed changes are not ratified or enacted
+        "
+"passed","Mon Jul 08 21:54:22 NPT 2024","Mon Jul 08 21:55:34 NPT 2024","71711","cardano_node_tests.tests.tests_conway","test_committee","TestCommittee","","","test_register_and_resign_committee_member[build_raw]","Test Constitutional Committee Member registration and resignation.
+
+        * register a potential CC Member
+        * check that CC Member was registered
+        * resign from CC Member position
+        * check that CC Member resigned
+        "
+"passed","Mon Jul 08 22:05:43 NPT 2024","Mon Jul 08 22:05:48 NPT 2024","4049","cardano_node_tests.tests.tests_conway","test_committee","TestCommittee","","","test_update_committee_action_equal[build_raw]","Test update committee action.
+
+        * create 3 proposals to add CC Members with different thresholds 
+        * vote insufficiently to disapprove action 3
+        * vote majority equally on actions 1 and 2
+        * check that the first action on the proposal list with enough votes is enacted 
+        "
+"passed","Mon Jul 08 22:12:19 NPT 2024","Mon Jul 08 22:12:23 NPT 2024","4062","cardano_node_tests.tests.tests_conway","test_committee","TestCommittee","","","test_update_committee_action_insufficient[build_raw]","Test update committee action.
+
+        * create 3 proposals to add CC Members with different thresholds 
+        * vote insufficiently to disapprove all proposals
+        * check that the proposed changes are not ratified or enacted
+        "
 "passed","Mon Jul 08 21:55:34 NPT 2024","Mon Jul 08 21:58:55 NPT 2024","200919","cardano_node_tests.tests.tests_conway","test_committee","TestCommittee","","","test_register_and_resign_committee_member[build]","Test Constitutional Committee Member registration and resignation.
 
         * register a potential CC Member
@@ -40,25 +46,12 @@
         * resign from CC Member position
         * check that CC Member resigned
         "
-"passed","Mon Jul 08 21:59:03 NPT 2024","Mon Jul 08 21:59:07 NPT 2024","4045","cardano_node_tests.tests.tests_conway","test_committee","TestCommittee","","","test_update_committee_action_majority[build_raw]","Test update committee action.
+"passed","Mon Jul 08 21:59:07 NPT 2024","Mon Jul 08 22:05:43 NPT 2024","396082","cardano_node_tests.tests.tests_conway","test_committee","TestCommittee","","","test_update_committee_action_majority[build]","Test update committee action.
 
         * create 3 proposals to add CC Members with different thresholds 
         * vote majority to approve action 3
         * vote insufficiently to disapprove actions 1 and 2
         * check that action 3 is ratified and enacted 
-        "
-"passed","Mon Jul 08 22:12:23 NPT 2024","Mon Jul 08 22:18:59 NPT 2024","396359","cardano_node_tests.tests.tests_conway","test_committee","TestCommittee","","","test_update_committee_action_insufficient[build]","Test update committee action.
-
-        * create 3 proposals to add CC Members with different thresholds 
-        * vote insufficiently to disapprove all proposals
-        * check that the proposed changes are not ratified or enacted
-        "
-"passed","Mon Jul 08 21:42:24 NPT 2024","Mon Jul 08 21:52:21 NPT 2024","597597","cardano_node_tests.tests.tests_conway","test_constitution","TestConstitution","","","test_change_constitution_insufficient","Test enactment of change of constitution.
-
-        * submit 3 ""create constitution"" actions
-        * check that SPOs cannot vote on a ""create constitution"" action
-        * 90 CC members and 100 DReps vote insufficiently to disapprove all constitution actions
-        * check that the none of the actions are ratified or enacted
         "
 "passed","Mon Jul 08 21:35:48 NPT 2024","Mon Jul 08 21:42:24 NPT 2024","395100","cardano_node_tests.tests.tests_conway","test_constitution","TestConstitution","","","test_change_constitution_equal","Test enactment of change of constitution.
 
@@ -82,71 +75,12 @@
         * check that action 3 is enacted
         * check that it's not possible to vote on enacted action
         "
-"passed","Tue Jul 09 03:49:15 NPT 2024","Tue Jul 09 03:49:21 NPT 2024","5944","cardano_node_tests.tests.tests_conway","test_drep","TestDelegDReps","","","test_dreps_and_spo_delegation[always_no_confidence-build]","Test delegating to DRep and SPO using single certificate.
+"passed","Mon Jul 08 21:42:24 NPT 2024","Mon Jul 08 21:52:21 NPT 2024","597597","cardano_node_tests.tests.tests_conway","test_constitution","TestConstitution","","","test_change_constitution_insufficient","Test enactment of change of constitution.
 
-        * register 58 stake addresses
-        * delegate stake to a stake pool and to following DReps:
-
-            - always-abstain
-            - always-no-confidence
-            - custom DRep
-
-        * check that the stake addresses are registered and delegated
-        "
-"passed","Tue Jul 09 03:49:09 NPT 2024","Tue Jul 09 03:49:15 NPT 2024","5410","cardano_node_tests.tests.tests_conway","test_drep","TestDelegDReps","","","test_dreps_and_spo_delegation[always_no_confidence-build_raw]","Test delegating to DRep and SPO using single certificate.
-
-        * register 58 stake addresses
-        * delegate stake to a stake pool and to following DReps:
-
-            - always-abstain
-            - always-no-confidence
-            - custom DRep
-
-        * check that the stake addresses are registered and delegated
-        "
-"passed","Tue Jul 09 03:48:47 NPT 2024","Tue Jul 09 03:48:53 NPT 2024","6052","cardano_node_tests.tests.tests_conway","test_drep","TestDelegDReps","","","test_dreps_and_spo_delegation[always_abstain-build_raw]","Test delegating to DRep and SPO using single certificate.
-
-        * register 58 stake addresses
-        * delegate stake to a stake pool and to following DReps:
-
-            - always-abstain
-            - always-no-confidence
-            - custom DRep
-
-        * check that the stake addresses are registered and delegated
-        "
-"passed","Tue Jul 09 03:47:48 NPT 2024","Tue Jul 09 03:47:55 NPT 2024","7577","cardano_node_tests.tests.tests_conway","test_drep","TestDelegDReps","","","test_dreps_delegation[always_no_confidence-build]","Test delegating to DReps.
-
-        * register 66 stake addresses
-        * delegate stake to following DReps:
-
-            - always-abstain
-            - always-no-confidence
-            - custom DRep
-
-        * check that the stake addresses are registered
-        "
-"passed","Tue Jul 09 03:48:53 NPT 2024","Tue Jul 09 03:49:09 NPT 2024","16308","cardano_node_tests.tests.tests_conway","test_drep","TestDelegDReps","","","test_dreps_and_spo_delegation[always_abstain-build]","Test delegating to DRep and SPO using single certificate.
-
-        * register 58 stake addresses
-        * delegate stake to a stake pool and to following DReps:
-
-            - always-abstain
-            - always-no-confidence
-            - custom DRep
-
-        * check that the stake addresses are registered and delegated
-        "
-"passed","Tue Jul 09 03:49:28 NPT 2024","Tue Jul 09 03:49:33 NPT 2024","4969","cardano_node_tests.tests.tests_conway","test_drep","TestDelegDReps","","","test_dreps_and_spo_delegation[custom-build]","Test delegating to DRep and SPO using single certificate.
-
-        * register 58 stake addresses
-        * delegate stake to a stake pool and to following DReps:
-
-            - always-abstain
-            - always-no-confidence
-            - custom DRep
-
-        * check that the stake addresses are registered and delegated
+        * submit 3 ""create constitution"" actions
+        * check that SPOs cannot vote on a ""create constitution"" action
+        * 90 CC members and 100 DReps vote insufficiently to disapprove all constitution actions
+        * check that the none of the actions are ratified or enacted
         "
 "passed","Tue Jul 09 03:47:41 NPT 2024","Tue Jul 09 03:47:48 NPT 2024","6394","cardano_node_tests.tests.tests_conway","test_drep","TestDelegDReps","","","test_dreps_delegation[always_no_confidence-build_raw]","Test delegating to DReps.
 
@@ -159,16 +93,27 @@
 
         * check that the stake addresses are registered
         "
-"passed","Tue Jul 09 03:47:36 NPT 2024","Tue Jul 09 03:47:41 NPT 2024","5355","cardano_node_tests.tests.tests_conway","test_drep","TestDelegDReps","","","test_dreps_delegation[always_abstain-build]","Test delegating to DReps.
+"passed","Tue Jul 09 03:49:28 NPT 2024","Tue Jul 09 03:49:33 NPT 2024","4969","cardano_node_tests.tests.tests_conway","test_drep","TestDelegDReps","","","test_dreps_and_spo_delegation[custom-build]","Test delegating to DRep and SPO using single certificate.
 
-        * register 66 stake addresses
-        * delegate stake to following DReps:
+        * register 58 stake addresses
+        * delegate stake to a stake pool and to following DReps:
 
             - always-abstain
             - always-no-confidence
             - custom DRep
 
-        * check that the stake addresses are registered
+        * check that the stake addresses are registered and delegated
+        "
+"passed","Tue Jul 09 03:48:53 NPT 2024","Tue Jul 09 03:49:09 NPT 2024","16308","cardano_node_tests.tests.tests_conway","test_drep","TestDelegDReps","","","test_dreps_and_spo_delegation[always_abstain-build]","Test delegating to DRep and SPO using single certificate.
+
+        * register 58 stake addresses
+        * delegate stake to a stake pool and to following DReps:
+
+            - always-abstain
+            - always-no-confidence
+            - custom DRep
+
+        * check that the stake addresses are registered and delegated
         "
 "passed","Tue Jul 09 03:49:21 NPT 2024","Tue Jul 09 03:49:27 NPT 2024","6866","cardano_node_tests.tests.tests_conway","test_drep","TestDelegDReps","","","test_dreps_and_spo_delegation[custom-build_raw]","Test delegating to DRep and SPO using single certificate.
 
@@ -180,6 +125,28 @@
             - custom DRep
 
         * check that the stake addresses are registered and delegated
+        "
+"passed","Tue Jul 09 03:49:15 NPT 2024","Tue Jul 09 03:49:21 NPT 2024","5944","cardano_node_tests.tests.tests_conway","test_drep","TestDelegDReps","","","test_dreps_and_spo_delegation[always_no_confidence-build]","Test delegating to DRep and SPO using single certificate.
+
+        * register 58 stake addresses
+        * delegate stake to a stake pool and to following DReps:
+
+            - always-abstain
+            - always-no-confidence
+            - custom DRep
+
+        * check that the stake addresses are registered and delegated
+        "
+"passed","Tue Jul 09 03:47:32 NPT 2024","Tue Jul 09 03:47:36 NPT 2024","3973","cardano_node_tests.tests.tests_conway","test_drep","TestDelegDReps","","","test_dreps_delegation[always_abstain-build_raw]","Test delegating to DReps.
+
+        * register 66 stake addresses
+        * delegate stake to following DReps:
+
+            - always-abstain
+            - always-no-confidence
+            - custom DRep
+
+        * check that the stake addresses are registered
         "
 "passed","Tue Jul 09 03:47:59 NPT 2024","Tue Jul 09 03:48:03 NPT 2024","3480","cardano_node_tests.tests.tests_conway","test_drep","TestDelegDReps","","","test_dreps_delegation[custom-build]","Test delegating to DReps.
 
@@ -203,7 +170,40 @@
 
         * check that the stake addresses are registered
         "
-"passed","Tue Jul 09 03:47:32 NPT 2024","Tue Jul 09 03:47:36 NPT 2024","3973","cardano_node_tests.tests.tests_conway","test_drep","TestDelegDReps","","","test_dreps_delegation[always_abstain-build_raw]","Test delegating to DReps.
+"passed","Tue Jul 09 03:49:09 NPT 2024","Tue Jul 09 03:49:15 NPT 2024","5410","cardano_node_tests.tests.tests_conway","test_drep","TestDelegDReps","","","test_dreps_and_spo_delegation[always_no_confidence-build_raw]","Test delegating to DRep and SPO using single certificate.
+
+        * register 58 stake addresses
+        * delegate stake to a stake pool and to following DReps:
+
+            - always-abstain
+            - always-no-confidence
+            - custom DRep
+
+        * check that the stake addresses are registered and delegated
+        "
+"passed","Tue Jul 09 03:47:36 NPT 2024","Tue Jul 09 03:47:41 NPT 2024","5355","cardano_node_tests.tests.tests_conway","test_drep","TestDelegDReps","","","test_dreps_delegation[always_abstain-build]","Test delegating to DReps.
+
+        * register 66 stake addresses
+        * delegate stake to following DReps:
+
+            - always-abstain
+            - always-no-confidence
+            - custom DRep
+
+        * check that the stake addresses are registered
+        "
+"passed","Tue Jul 09 03:48:47 NPT 2024","Tue Jul 09 03:48:53 NPT 2024","6052","cardano_node_tests.tests.tests_conway","test_drep","TestDelegDReps","","","test_dreps_and_spo_delegation[always_abstain-build_raw]","Test delegating to DRep and SPO using single certificate.
+
+        * register 58 stake addresses
+        * delegate stake to a stake pool and to following DReps:
+
+            - always-abstain
+            - always-no-confidence
+            - custom DRep
+
+        * check that the stake addresses are registered and delegated
+        "
+"passed","Tue Jul 09 03:47:48 NPT 2024","Tue Jul 09 03:47:55 NPT 2024","7577","cardano_node_tests.tests.tests_conway","test_drep","TestDelegDReps","","","test_dreps_delegation[always_no_confidence-build]","Test delegating to DReps.
 
         * register 66 stake addresses
         * delegate stake to following DReps:
@@ -248,20 +248,20 @@
         * 3 SPOs, 100 DReps and 90 CC Members vote on the action
         * check the votes
         "
-"passed","Mon Jul 15 13:51:22 NPT 2024","Mon Jul 15 13:54:52 NPT 2024","210092","cardano_node_tests.tests.tests_conway","test_mass_abstain","TestMassAbstain","","","test_dreps_abstain_delegation","Test mass abstain delegating to DReps.
+"passed","Wed Jul 17 18:58:10 NPT 2024","Wed Jul 17 18:59:02 NPT 2024","51760","cardano_node_tests.tests.tests_conway","test_mass_abstain","TestMassAbstain","","","test_dreps_vote_committee_update","Test delegated DReps vote on an update committee action.
 
-        * register 990 stake addresses that will delegate to abstain
+        * create an udpate committee threshold action
+        * 10 registered DReps and 3 SPOs cast vote
+        * check that the action is ratified
+        "
+"passed","Wed Jul 17 18:20:22 NPT 2024","Wed Jul 17 18:58:09 NPT 2024","2267730","cardano_node_tests.tests.tests_conway","test_mass_abstain","TestMassAbstain","","","test_dreps_abstain_delegation","Test mass abstain delegating to DReps.
+
+        * register 9990 stake addresses that will delegate to abstain
         * register 10 stake addresses that will delegate to the 10 DReps
         * check that the stake addresses are registered
         * check that stake addresses delegated to the correct DReps
         "
-"passed","Mon Jul 15 13:54:52 NPT 2024","Mon Jul 15 13:56:43 NPT 2024","110445","cardano_node_tests.tests.tests_conway","test_mass_abstain","TestMassAbstain","","","test_dreps_vote_committee_update","Test delegated DReps vote on an update committee action.
-
-        * create an udpate committee action
-        * 10 registered DReps and 3 SPOs cast vote
-        * check that the action is ratified
-        "
-"passed","Mon Jul 15 13:49:14 NPT 2024","Mon Jul 15 13:49:19 NPT 2024","4622","cardano_node_tests.tests.tests_conway","test_mass_abstain","TestMassAbstain","","","test_register_drep","Test DRep registration.
+"passed","Wed Jul 17 17:58:52 NPT 2024","Wed Jul 17 17:58:57 NPT 2024","4382","cardano_node_tests.tests.tests_conway","test_mass_abstain","TestMassAbstain","","","test_register_drep","Test DRep registration.
 
         * register 10 DRep
         * check that DReps were registered
@@ -276,14 +276,6 @@
         * check return account balance
         * check that it's not possible to vote on enacted action
         "
-"passed","Tue Jul 09 02:51:41 NPT 2024","Tue Jul 09 03:08:19 NPT 2024","998206","cardano_node_tests.tests.tests_conway","test_no_confidence","TestNoConfidence","","","test_no_confidence_action_insufficient","Test no confidence action.
-
-        * create 3 ""no confidence"" actions
-        * check that CC members votes have no effect
-        * 3 SPOs and 100 DReps vote insufficiently to disapprove all no confidence actions
-        * check that none of the actions are enacted
-        * check return account balance
-        "
 "passed","Tue Jul 09 02:15:38 NPT 2024","Tue Jul 09 02:35:03 NPT 2024","1165021","cardano_node_tests.tests.tests_conway","test_no_confidence","TestNoConfidence","","","test_no_confidence_action_majority","Test no confidence action.
 
         * create 3 ""no confidence"" actions
@@ -292,6 +284,22 @@
         * 3 SPOs and 100 DReps vote majority to approve action 3
         * check that action 3 is enacted
         * check that it's not possible to vote on enacted action
+        "
+"passed","Tue Jul 09 02:51:41 NPT 2024","Tue Jul 09 03:08:19 NPT 2024","998206","cardano_node_tests.tests.tests_conway","test_no_confidence","TestNoConfidence","","","test_no_confidence_action_insufficient","Test no confidence action.
+
+        * create 3 ""no confidence"" actions
+        * check that CC members votes have no effect
+        * 3 SPOs and 100 DReps vote insufficiently to disapprove all no confidence actions
+        * check that none of the actions are enacted
+        * check return account balance
+        "
+"passed","Tue Jul 09 01:56:30 NPT 2024","Tue Jul 09 02:01:49 NPT 2024","319542","cardano_node_tests.tests.tests_conway","test_pparam_update","TestPParamUpdate","","","test_pparam_update_majority","Test protocol parameter update.
+
+        * submit 3 ""protocol parameters update"" action
+        * 3 SPOs, 90 CC Members and 100 DReps vote insufficiently to disapprove actions 1 and 2 
+        * 3 SPOs, 90 CC Members and 100 DReps vote majority to approve action 3
+        * check that action 3 is ratified
+        * check that action 3 is enacted 
         "
 "passed","Tue Jul 09 02:08:26 NPT 2024","Tue Jul 09 02:14:56 NPT 2024","390266","cardano_node_tests.tests.tests_conway","test_pparam_update","TestPParamUpdate","","","test_pparam_update_insufficient","Test protocol parameter update.
 
@@ -306,22 +314,6 @@
         * 3 SPOs, 90 CC Members and 100 DReps vote majority to approve action 2 and 3
         * check that the first action on the proposal list with enough votes is enacted
         "
-"passed","Tue Jul 09 01:56:30 NPT 2024","Tue Jul 09 02:01:49 NPT 2024","319542","cardano_node_tests.tests.tests_conway","test_pparam_update","TestPParamUpdate","","","test_pparam_update_majority","Test protocol parameter update.
-
-        * submit 3 ""protocol parameters update"" action
-        * 3 SPOs, 90 CC Members and 100 DReps vote insufficiently to disapprove actions 1 and 2 
-        * 3 SPOs, 90 CC Members and 100 DReps vote majority to approve action 3
-        * check that action 3 is ratified
-        * check that action 3 is enacted 
-        "
-"passed","Tue Jul 09 06:57:23 NPT 2024","Tue Jul 09 07:07:30 NPT 2024","606278","cardano_node_tests.tests.tests_conway","test_treasury_withdrawals","TestTreasuryWithdrawals","","","test_treasury_withdrawals_insufficient","Test enactment of multiple treasury withdrawals in single epoch.
-
-        Use `transaction build` for building the transactions.
-        * submit 3 ""treasury withdrawal"" actions
-        * check that SPOs cannot vote on a ""treasury withdrawal"" actions
-        * 100 DReps and 90 CC Members vote insufficiently to disapprove all actions
-        * check that the actions expire and action deposits are returned
-        "
 "passed","Tue Jul 09 06:47:28 NPT 2024","Tue Jul 09 06:57:23 NPT 2024","595259","cardano_node_tests.tests.tests_conway","test_treasury_withdrawals","TestTreasuryWithdrawals","","","test_treasury_withdrawals_equal","Test enactment of multiple treasury withdrawals in single epoch.
 
         Use `transaction build` for building the transactions.
@@ -333,6 +325,14 @@
         * try to disapprove the ratified action, this shouldn't have any effect
         * check that the action are enacted
         * check that it's not possible to vote on enacted action
+        "
+"passed","Tue Jul 09 06:57:23 NPT 2024","Tue Jul 09 07:07:30 NPT 2024","606278","cardano_node_tests.tests.tests_conway","test_treasury_withdrawals","TestTreasuryWithdrawals","","","test_treasury_withdrawals_insufficient","Test enactment of multiple treasury withdrawals in single epoch.
+
+        Use `transaction build` for building the transactions.
+        * submit 3 ""treasury withdrawal"" actions
+        * check that SPOs cannot vote on a ""treasury withdrawal"" actions
+        * 100 DReps and 90 CC Members vote insufficiently to disapprove all actions
+        * check that the actions expire and action deposits are returned
         "
 "passed","Tue Jul 09 06:40:53 NPT 2024","Tue Jul 09 06:47:27 NPT 2024","394769","cardano_node_tests.tests.tests_conway","test_treasury_withdrawals","TestTreasuryWithdrawals","","","test_treasury_withdrawals_majority","Test enactment of multiple treasury withdrawals in single epoch.
 

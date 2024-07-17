@@ -1,2 +1,0 @@
-
-drep_cred_path:  /home/rishav/cardano-node-tests/cardano_node_tests/tests/drep_certs
