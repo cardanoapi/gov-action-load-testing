@@ -53,7 +53,7 @@ def get_payment_addr(
         addr,
         cluster_obj=cluster_obj,
         faucet_data=cluster_manager.cache.addrs_data["user1"],
-        amount=1000000000000
+        amount=10000000000000
     )
 
     return addr
@@ -113,7 +113,7 @@ def pool_users(
     test_id = common.get_test_id(cluster)
     key = helpers.get_current_line_str()
     return get_pool_user(
-        name_template=test_id, cluster_manager=cluster_manager, cluster_obj=cluster, caching_key=key, no_of_users=10000
+        name_template=test_id, cluster_manager=cluster_manager, cluster_obj=cluster, caching_key=key, no_of_users=1000000
     )
 
 # register DReps
@@ -186,7 +186,8 @@ class TestMassAbstain:
         
         drep_registration_certificates = [reg_drep.registration_cert for reg_drep in reg_dreps]
         drep_skey_files = [reg_drep.key_pair.skey_file for reg_drep in reg_dreps]
-        
+        src_init_balance = cluster.g_query.get_address_balance(payment_addr.address)
+        print("\nbalance: ", src_init_balance)
         def check_balance(tx_output_reg):
             reg_out_utxos = cluster.g_query.get_utxo(tx_raw_output=tx_output_reg)
             assert (
@@ -239,7 +240,7 @@ class TestMassAbstain:
     ):
         """Test mass abstain delegating to DReps.
 
-        * register 9990 stake addresses that will delegate to abstain
+        * register 999_990 stake addresses that will delegate to abstain
         * register 10 stake addresses that will delegate to the 10 DReps
         * check that the stake addresses are registered
         * check that stake addresses delegated to the correct DReps

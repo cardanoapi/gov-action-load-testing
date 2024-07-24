@@ -520,7 +520,7 @@ cardano_cli_log conway query protocol-parameters \
 
 TXIN_ADDR="$(<"$STATE_CLUSTER"/shelley/genesis-utxo.addr)"
 DEPOSITS="$((KEY_DEPOSIT * 2))"
-NEEDED_AMOUNT="$(( (POOL_PLEDGE + DEPOSITS) * NUM_POOLS * 9999999999999 ))"
+NEEDED_AMOUNT="$(( (POOL_PLEDGE + DEPOSITS) * NUM_POOLS))"
 FEE_BUFFER=100000000
 STOP_TXIN_AMOUNT="$((NEEDED_AMOUNT + FEE_BUFFER))"
 
