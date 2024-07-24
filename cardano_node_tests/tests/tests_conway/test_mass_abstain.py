@@ -187,7 +187,6 @@ class TestMassAbstain:
         drep_registration_certificates = [reg_drep.registration_cert for reg_drep in reg_dreps]
         drep_skey_files = [reg_drep.key_pair.skey_file for reg_drep in reg_dreps]
         src_init_balance = cluster.g_query.get_address_balance(payment_addr.address)
-        print("\nbalance: ", src_init_balance)
         def check_balance(tx_output_reg):
             reg_out_utxos = cluster.g_query.get_utxo(tx_raw_output=tx_output_reg)
             assert (
