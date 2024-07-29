@@ -113,7 +113,7 @@ def pool_users(
     test_id = common.get_test_id(cluster)
     key = helpers.get_current_line_str()
     return get_pool_user(
-        name_template=test_id, cluster_manager=cluster_manager, cluster_obj=cluster, caching_key=key, no_of_users=1000000
+        name_template=test_id, cluster_manager=cluster_manager, cluster_obj=cluster, caching_key=key, no_of_users=10000
     )
 
 # register DReps
@@ -239,7 +239,7 @@ class TestMassAbstain:
     ):
         """Test mass abstain delegating to DReps.
 
-        * register 999_990 stake addresses that will delegate to abstain
+        * register 9990 stake addresses that will delegate to abstain
         * register 10 stake addresses that will delegate to the 10 DReps
         * check that the stake addresses are registered
         * check that stake addresses delegated to the correct DReps

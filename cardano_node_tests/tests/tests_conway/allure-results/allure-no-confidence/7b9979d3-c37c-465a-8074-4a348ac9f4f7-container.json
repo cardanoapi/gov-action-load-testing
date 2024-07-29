@@ -1,0 +1,1 @@
+{"uuid": "49be4178-841a-41f8-873e-f8c5f25ad0aa", "children": ["ae88770c-19af-43c3-8c6b-61e0265e135d"], "befores": [{"name": "cd_testfile_temp_dir", "status": "passed", "start": 1721984976169, "stop": 1721984976169}], "afters": [{"name": "cd_testfile_temp_dir::0", "status": "passed", "start": 1721985976255, "stop": 1721985976255}], "start": 1721984976169, "stop": 1721985976255}

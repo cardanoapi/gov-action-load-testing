@@ -1,0 +1,1 @@
+{"uuid": "bfad450f-ca6b-454a-93bc-1b74d26b9f7d", "children": ["46bc8b22-ee70-4bbc-b9ff-b627919e8794", "ae88770c-19af-43c3-8c6b-61e0265e135d", "c4f26e19-6842-4a74-bc34-8164480cc06b"], "befores": [{"name": "init_pytest_temp_dirs", "status": "passed", "start": 1721983685676, "stop": 1721983685677}], "start": 1721983685676, "stop": 1721986976324}
