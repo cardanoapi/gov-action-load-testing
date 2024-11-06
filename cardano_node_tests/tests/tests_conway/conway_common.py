@@ -3,6 +3,7 @@
 import dataclasses
 from enum import Enum
 from itertools import chain
+import itertools
 import json
 import logging
 import math
@@ -265,6 +266,172 @@ def submit_vote(
     ), f"Incorrect balance for source address `{payment_addr.address}`"
 
     return tx_output
+
+
+class Votes(Enum):
+    MAJORITY = "majority"
+    EQUAL = "equal"
+    INSUFFICIENT = "insufficient"
+
+def _cast_vote(
+    temp_template: str,
+    action_ix: int,
+    action_txid,
+    governance_data,
+    cluster,
+    pool_user,
+    vote: Votes,
+    vote_spo: bool = False,
+    vote_drep: bool = False,
+    vote_cc: bool = False,
+) -> governance_utils.VotedVotes:
+    votes_cc = []
+    votes_drep = []
+    votes_spo = []
+    pools_cold = governance_data.pools_cold
+    dreps_reg = governance_data.dreps_reg
+    cc_members = governance_data.cc_key_members
+
+    def calculate_yes_count(entities, vote):
+        if vote == Votes.MAJORITY:
+            return (len(entities)) // 2 + 2
+        elif vote == Votes.EQUAL:
+            return (len(entities) + 1) // 2  # handles both even and odd cases
+        elif vote == Votes.INSUFFICIENT:
+            return len(entities) // 2 - 2
+        else:
+            raise ValueError(f"Unknown vote type: {vote}")
+
+    lazy = []
+
+    def distribute_votes(vote_list, entities, vote_name_prefix, create_vote_func):
+        yes_count = calculate_yes_count(entities, vote)
+        for i, entity in enumerate(entities, start=1):
+            if vote_name_prefix == "pool":
+                key_attr = ("cold_vkey_file", entity.vkey_file)
+            elif vote_name_prefix == "drep":
+                key_attr = ("drep_vkey_file", entity.key_pair.vkey_file)
+            elif vote_name_prefix == "cc":
+                key_attr = ("cc_hot_vkey_file", entity.hot_keys.hot_vkey_file)
+            vote_choice = clusterlib.Votes.YES if i <= yes_count else clusterlib.Votes.NO
+            lazy_vote_choice = "YES" if i <= yes_count else "NO"
+            if vote_name_prefix == "cc":
+                lazy.append(lazy_vote_choice)
+            vote_list.append(
+                create_vote_func(
+                    vote_name=f"{temp_template}_{action_txid}#{action_ix}_{vote_name_prefix}{i}",
+                    action_txid=action_txid,
+                    action_ix=action_ix,
+                    vote=vote_choice,
+                    **{key_attr[0]: key_attr[1]}
+                )
+            )
+
+    if vote_spo:
+        distribute_votes(
+            votes_spo,
+            pools_cold,
+            "pool",
+            cluster.g_conway_governance.vote.create_spo,
+        )
+
+    if vote_drep:
+        distribute_votes(
+            votes_drep,
+            dreps_reg,
+            "drep",
+            cluster.g_conway_governance.vote.create_drep,
+        )
+
+    if vote_cc:
+        distribute_votes(
+            votes_cc,
+            cc_members,
+            "cc",
+            cluster.g_conway_governance.vote.create_committee,
+        )
+    cc_hot_skey_files = [
+        r.hot_keys.hot_skey_file for r in cc_members] if votes_cc else []
+    drep_reg_skey_files = [
+        r.key_pair.skey_file for r in dreps_reg] if votes_drep else []
+    spo_keys = [
+        r.skey_file for r in governance_data.pools_cold] if votes_spo else []
+
+    # Make sure we have enough time to submit the votes in one epoch
+    clusterlib_utils.wait_for_epoch_interval(
+        cluster_obj=cluster, start=1, stop=common.EPOCH_STOP_SEC_BUFFER
+    )
+
+    # submit cc votes
+    submit_vote_(
+        cluster_obj=cluster,
+        name_template=f"{temp_template}",
+        payment_addr=pool_user.payment,
+        votes=votes_cc,
+        keys=cc_hot_skey_files,
+    )
+    # submit drep votes
+    submit_vote_(
+        cluster_obj=cluster,
+        name_template=f"{temp_template}",
+        payment_addr=pool_user.payment,
+        votes=votes_drep,
+        keys=drep_reg_skey_files,
+    )
+    # submit spo votes
+    submit_vote_(
+        cluster_obj=cluster,
+        name_template=f"{temp_template}",
+        payment_addr=pool_user.payment,
+        votes=votes_spo,
+        keys=spo_keys,
+    )
+
+    vote_gov_state = cluster.g_conway_governance.query.gov_state()
+    _cur_epoch = cluster.g_query.get_epoch()
+    save_gov_state(
+        gov_state=vote_gov_state,
+        name_template=f"{temp_template}_vote_{_cur_epoch}",
+    )
+    return governance_utils.VotedVotes(cc=votes_cc, drep=votes_drep, spo=votes_spo)
+
+
+def submit_vote_(
+    cluster_obj: clusterlib.ClusterLib,
+    name_template: str,
+    payment_addr: clusterlib.AddressRecord,
+    votes: tp.List[governance_utils.VotesAllT],
+    keys: tp.List[clusterlib.FileType],
+    submit_method: str = "",
+    use_build_cmd: bool = False,
+)-> tp.List[clusterlib.TxRawOutput]:
+    """Submit a Tx with votes in chunks of 60."""
+    
+    def divide_list_into_sublists(m_list, n):
+        if n==0 or m_list==[]: 
+            return [m_list]
+        result = [m_list[i:i + n] for i in range(0, len(m_list), n)]
+        return result
+    
+    total_keys= len(keys)
+    vote_chunks= divide_list_into_sublists(votes, total_keys)
+    tx_outputs=[]
+    for vote_chunk in vote_chunks: 
+        tx_outputs.append(
+            submit_vote
+            (
+                cluster_obj,
+                name_template,
+                payment_addr,
+                vote_chunk,
+                keys,
+                submit_method,
+                use_build_cmd
+            )
+        )
+    
+    return [*tx_outputs]
+
 
 
 def cast_vote(
