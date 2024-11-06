@@ -24,15 +24,14 @@ def fund_from_faucet(
     force: bool = False,
 ) -> tp.Optional[clusterlib.TxRawOutput]:
     """Send `amount` from faucet addr to all `dst_addrs`."""
-    if not (faucet_data or all_faucets):
-        msg = "Either `faucet_data` or `all_faucets` must be provided."
-        raise AssertionError(msg)
-
-    # Get payment AddressRecord out of PoolUser
+    # get payment AddressRecord out of PoolUser
     dst_addr_records: tp.List[clusterlib.AddressRecord] = [
         (r.payment if hasattr(r, "payment") else r)
         for r in dst_addrs  # type: ignore
     ]
+    if(isinstance(dst_addr_records[0], list)):
+        dst_addr_records=dst_addr_records[0]
+        
     if isinstance(amount, int):
         amount = [amount] * len(dst_addr_records)
 
@@ -44,13 +43,6 @@ def fund_from_faucet(
     if not fund_dst:
         return None
 
-    if not faucet_data and all_faucets:
-        # Randomly select one of the "user" faucets
-        all_user_keys = [k for k in all_faucets if k.startswith("user")]
-        selected_user_key = random.choice(all_user_keys)
-        faucet_data = all_faucets[selected_user_key]
-
-    assert faucet_data
     src_address = faucet_data["payment"].address
     with locking.FileLockIfXdist(f"{temptools.get_basetemp()}/{src_address}.lock"):
         tx_name = tx_name or helpers.get_timestamped_rand_str()

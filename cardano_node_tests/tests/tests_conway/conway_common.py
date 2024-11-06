@@ -1,9 +1,11 @@
 """Common functionality for Conway governance tests."""
 
 import dataclasses
-import itertools
+from enum import Enum
+from itertools import chain
 import json
 import logging
+import math
 import typing as tp
 
 from cardano_clusterlib import clusterlib
@@ -116,60 +118,112 @@ def get_registered_pool_user(
     cluster_obj: clusterlib.ClusterLib,
     caching_key: str = "",
     fund_amount: int = 1000_000_000,
-) -> clusterlib.PoolUser:
+    no_of_users: int = 1
+) -> tp.List[clusterlib.PoolUser]:
     """Create a registered pool user."""
 
     def _create_user() -> clusterlib.PoolUser:
-        pool_user = clusterlib_utils.create_pool_users(
+        pool_users = clusterlib_utils.create_pool_users(
             cluster_obj=cluster_obj,
             name_template=f"{name_template}_pool_user",
-            no_of_addr=1,
-        )[0]
-        return pool_user
+            no_of_addr=no_of_users,
+        )
+        return pool_users
 
     if caching_key:
         with cluster_manager.cache_fixture(key=caching_key) as fixture_cache:
             if fixture_cache.value:
                 return fixture_cache.value  # type: ignore
 
-            pool_user = _create_user()
-            fixture_cache.value = pool_user
+            pool_users = _create_user()
+            fixture_cache.value = pool_users
     else:
-        pool_user = _create_user()
+        pool_users = _create_user()
 
     # Fund the payment address with some ADA
-    clusterlib_utils.fund_from_faucet(
-        pool_user.payment,
-        cluster_obj=cluster_obj,
-        all_faucets=cluster_manager.cache.addrs_data,
-        amount=fund_amount,
-    )
-
+    fund_pool_users(pool_users, cluster_obj, cluster_manager, fund_amount)
     # Register the stake address
+    register_pool_users(name_template, pool_users, cluster_obj)
+
+    return pool_users
+
+
+def fund_pool_users(
+    pool_users: tp.List[clusterlib.PoolUser],
+    cluster_obj: clusterlib.ClusterLib,
+    cluster_manager: cluster_management.ClusterManager,
+    fund_amount: int,
+):
+    chunk_size = 100
+    num_pool_users = len(pool_users)
+
+    # Iterate over chunks of pool users and fund their payment addresses
+    for start_index in range(0, num_pool_users, chunk_size):
+        end_index = start_index + chunk_size
+        chunk_pool_users = pool_users[start_index:end_index]
+        pool_users_payment = [
+            pool_user.payment for pool_user in chunk_pool_users]
+
+        clusterlib_utils.fund_from_faucet(
+            pool_users_payment,
+            cluster_obj=cluster_obj,
+            faucet_data=cluster_manager.cache.addrs_data["user1"],
+            amount=fund_amount,
+        )
+
+
+def register_pool_users(
+    name_template: str,
+    pool_users: tp.List[clusterlib.PoolUser],
+    cluster_obj: clusterlib.ClusterLib,
+    chunk_size: int = 50
+):
     stake_deposit_amt = cluster_obj.g_query.get_address_deposit()
-    stake_addr_reg_cert = cluster_obj.g_stake_address.gen_stake_addr_registration_cert(
-        addr_name=f"{name_template}_pool_user",
-        deposit_amt=stake_deposit_amt,
-        stake_vkey_file=pool_user.stake.vkey_file,
-    )
-    tx_files_action = clusterlib.TxFiles(
-        certificate_files=[stake_addr_reg_cert],
-        signing_key_files=[pool_user.payment.skey_file, pool_user.stake.skey_file],
-    )
+    no_of_users = len(pool_users)
+    num_chunks = math.ceil(no_of_users / chunk_size)
+    for chunk_index in range(num_chunks):
+        # Determine the start and end index for the current chunk
+        start_index = chunk_index * chunk_size
+        end_index = min(start_index + chunk_size, no_of_users)
 
-    clusterlib_utils.build_and_submit_tx(
-        cluster_obj=cluster_obj,
-        name_template=f"{name_template}_pool_user",
-        src_address=pool_user.payment.address,
-        use_build_cmd=True,
-        tx_files=tx_files_action,
-    )
+        # Get the current chunk of pool users
+        chunk_pool_users = pool_users[start_index:end_index]
 
-    assert cluster_obj.g_query.get_stake_addr_info(
-        pool_user.stake.address
-    ).address, f"Stake address is not registered: {pool_user.stake.address}"
+        # Generate registration certificates for the current chunk
+        stake_addr_reg_cert = [
+            cluster_obj.g_stake_address.gen_stake_addr_registration_cert(
+                addr_name=f"{name_template}_pool_user{i}",
+                deposit_amt=stake_deposit_amt,
+                stake_vkey_file=pool_user.stake.vkey_file,
+            )
+            for i, pool_user in enumerate(chunk_pool_users, start=start_index)
+        ]
 
-    return pool_user
+        # Prepare the signing key files for the current chunk
+        pool_users_payment_skey = [
+            pool_user.payment.skey_file for pool_user in chunk_pool_users]
+        pool_users_stake_skey = [
+            pool_user.stake.skey_file for pool_user in chunk_pool_users]
+
+        tx_files_action = clusterlib.TxFiles(
+            certificate_files=stake_addr_reg_cert,
+            signing_key_files=pool_users_payment_skey + pool_users_stake_skey,
+        )
+
+        # Submit the transaction for the current chunk
+        clusterlib_utils.build_and_submit_tx(
+            cluster_obj=cluster_obj,
+            name_template=f"{name_template}_pool_user_chunk_{chunk_index}",
+            src_address=chunk_pool_users[0].payment.address,
+            use_build_cmd=True,
+            tx_files=tx_files_action,
+        )
+
+        # Verify the registration for each pool user in the current chunk
+        for pool_user in chunk_pool_users:
+            assert cluster_obj.g_query.get_stake_addr_info(
+                pool_user.stake.address
+            ).address, f"Stake address is not registered: {pool_user.stake.address}"
 
 
 def submit_vote(
@@ -205,7 +259,8 @@ def submit_vote(
 
     out_utxos = cluster_obj.g_query.get_utxo(tx_raw_output=tx_output)
     assert (
-        clusterlib.filter_utxos(utxos=out_utxos, address=payment_addr.address)[0].amount
+        clusterlib.filter_utxos(
+            utxos=out_utxos, address=payment_addr.address)[0].amount
         == clusterlib.calculate_utxos_balance(tx_output.txins) - tx_output.fee
     ), f"Incorrect balance for source address `{payment_addr.address}`"
 
@@ -244,7 +299,8 @@ def cast_vote(
                 vote_name=f"{name_template}_cc{i}",
                 action_txid=action_txid,
                 action_ix=action_ix,
-                vote=get_yes_abstain_vote(i) if approve_cc else get_no_abstain_vote(i),
+                vote=get_yes_abstain_vote(
+                    i) if approve_cc else get_no_abstain_vote(i),
                 cc_hot_vkey_file=m.hot_keys.hot_vkey_file,
                 anchor_url=f"http://www.cc-vote{i}.com",
                 anchor_data_hash="5d372dca1a4cc90d7d16d966c48270e33e3aa0abcb0e78f0d5ca7ff330d2245d",
@@ -261,7 +317,8 @@ def cast_vote(
                 vote_name=f"{name_template}_drep{i}",
                 action_txid=action_txid,
                 action_ix=action_ix,
-                vote=get_yes_abstain_vote(i) if approve_drep else get_no_abstain_vote(i),
+                vote=get_yes_abstain_vote(
+                    i) if approve_drep else get_no_abstain_vote(i),
                 drep_vkey_file=d.key_pair.vkey_file,
                 anchor_url=f"http://www.drep-vote{i}.com",
                 anchor_data_hash="5d372dca1a4cc90d7d16d966c48270e33e3aa0abcb0e78f0d5ca7ff330d2245d",
@@ -275,7 +332,8 @@ def cast_vote(
                 vote_name=f"{name_template}_sdrep{i}",
                 action_txid=action_txid,
                 action_ix=action_ix,
-                vote=get_yes_abstain_vote(i) if approve_drep else get_no_abstain_vote(i),
+                vote=get_yes_abstain_vote(
+                    i) if approve_drep else get_no_abstain_vote(i),
                 drep_script_hash=d.script_hash,
                 anchor_url=f"http://www.sdrep-vote{i}.com",
                 anchor_data_hash="5d372dca1a4cc90d7d16d966c48270e33e3aa0abcb0e78f0d5ca7ff330d2245d",
@@ -294,7 +352,8 @@ def cast_vote(
                 vote_name=f"{name_template}_pool{i}",
                 action_txid=action_txid,
                 action_ix=action_ix,
-                vote=get_yes_abstain_vote(i) if approve_spo else get_no_abstain_vote(i),
+                vote=get_yes_abstain_vote(
+                    i) if approve_spo else get_no_abstain_vote(i),
                 cold_vkey_file=p.vkey_file,
                 anchor_url=f"http://www.spo-vote{i}.com",
                 anchor_data_hash="5d372dca1a4cc90d7d16d966c48270e33e3aa0abcb0e78f0d5ca7ff330d2245d",
@@ -303,21 +362,26 @@ def cast_vote(
         ]
         votes_spo = [v for v in _votes_spo if v]
 
-    cc_keys = [r.hot_keys.hot_skey_file for r in governance_data.cc_key_members] if votes_cc else []
-    drep_keys = [r.key_pair.skey_file for r in governance_data.dreps_reg] if votes_drep_keys else []
+    cc_keys = [
+        r.hot_keys.hot_skey_file for r in governance_data.cc_key_members] if votes_cc else []
+    drep_keys = [
+        r.key_pair.skey_file for r in governance_data.dreps_reg] if votes_drep_keys else []
     drep_script_key_pairs = itertools.chain.from_iterable(
         [r.key_pairs for r in governance_data.drep_scripts_reg] if votes_drep_scripts else []
     )
     drep_script_witnesses = [r.skey_file for r in drep_script_key_pairs]
-    spo_keys = [r.skey_file for r in governance_data.pools_cold] if votes_spo else []
+    spo_keys = [
+        r.skey_file for r in governance_data.pools_cold] if votes_spo else []
 
-    votes_simple: tp.List[governance_utils.VotesAllT] = [*votes_cc, *votes_drep_keys, *votes_spo]
+    votes_simple: tp.List[governance_utils.VotesAllT] = [
+        *votes_cc, *votes_drep_keys, *votes_spo]
     keys_all = [*cc_keys, *drep_keys, *drep_script_witnesses, *spo_keys]
 
     script_votes: tp.List[clusterlib.ScriptVote] = []
 
     if votes_drep_scripts:
-        drep_script_reg_certs = [r.registration_cert for r in governance_data.drep_scripts_reg]
+        drep_script_reg_certs = [
+            r.registration_cert for r in governance_data.drep_scripts_reg]
         script_votes = [
             clusterlib.ScriptVote(
                 vote_file=v.vote_file,
@@ -355,7 +419,8 @@ def cast_vote(
         gov_state=gov_state,
         name_template=f"{name_template}_vote_{vote_epoch}",
     )
-    prop_vote = governance_utils.lookup_proposal(gov_state=gov_state, action_txid=action_txid)
+    prop_vote = governance_utils.lookup_proposal(
+        gov_state=gov_state, action_txid=action_txid)
     assert not votes_cc or prop_vote["committeeVotes"], "No committee votes"
     assert not votes_drep or prop_vote["dRepVotes"], "No DRep votes"
     assert not votes_spo or prop_vote["stakePoolVotes"], "No stake pool votes"
@@ -396,7 +461,8 @@ def resign_ccs(
 
     cluster_obj.wait_for_new_block(new_blocks=2)
     res_committee_state = cluster_obj.g_conway_governance.query.committee_state()
-    save_committee_state(committee_state=res_committee_state, name_template=f"{name_template}_res")
+    save_committee_state(committee_state=res_committee_state,
+                         name_template=f"{name_template}_res")
     for cc_member in ccs_to_resign:
         member_key = f"keyHash-{cc_member.cold_vkey_hash}"
         member_rec = res_committee_state["committee"].get(member_key)
@@ -459,11 +525,13 @@ def propose_change_constitution(
 
     out_utxos = cluster_obj.g_query.get_utxo(tx_raw_output=tx_output)
     assert (
-        clusterlib.filter_utxos(utxos=out_utxos, address=pool_user.payment.address)[0].amount
+        clusterlib.filter_utxos(
+            utxos=out_utxos, address=pool_user.payment.address)[0].amount
         == clusterlib.calculate_utxos_balance(tx_output.txins) - tx_output.fee - deposit_amt
     ), f"Incorrect balance for source address `{pool_user.payment.address}`"
 
-    action_txid = cluster_obj.g_transaction.get_txid(tx_body_file=tx_output.out_file)
+    action_txid = cluster_obj.g_transaction.get_txid(
+        tx_body_file=tx_output.out_file)
     action_gov_state = cluster_obj.g_conway_governance.query.gov_state()
     action_epoch = cluster_obj.g_query.get_epoch()
     save_gov_state(
@@ -501,7 +569,8 @@ def propose_pparams_update(
         gov_state=cluster_obj.g_conway_governance.query.gov_state(),
     )
 
-    update_args = clusterlib_utils.get_pparams_update_args(update_proposals=proposals)
+    update_args = clusterlib_utils.get_pparams_update_args(
+        update_proposals=proposals)
     pparams_action = cluster_obj.g_conway_governance.action.create_pparams_update(
         action_name=name_template,
         deposit_amt=deposit_amt,
@@ -531,15 +600,18 @@ def propose_pparams_update(
         tx_files=tx_files_action,
     )
 
-    out_utxos_action = cluster_obj.g_query.get_utxo(tx_raw_output=tx_output_action)
+    out_utxos_action = cluster_obj.g_query.get_utxo(
+        tx_raw_output=tx_output_action)
     assert (
-        clusterlib.filter_utxos(utxos=out_utxos_action, address=pool_user.payment.address)[0].amount
+        clusterlib.filter_utxos(utxos=out_utxos_action,
+                                address=pool_user.payment.address)[0].amount
         == clusterlib.calculate_utxos_balance(tx_output_action.txins)
         - tx_output_action.fee
         - deposit_amt
     ), f"Incorrect balance for source address `{pool_user.payment.address}`"
 
-    action_txid = cluster_obj.g_transaction.get_txid(tx_body_file=tx_output_action.out_file)
+    action_txid = cluster_obj.g_transaction.get_txid(
+        tx_body_file=tx_output_action.out_file)
     action_gov_state = cluster_obj.g_conway_governance.query.gov_state()
     action_epoch = cluster_obj.g_query.get_epoch()
     save_gov_state(
