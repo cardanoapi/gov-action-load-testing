@@ -476,12 +476,8 @@ def resign_ccs(
 def propose_change_constitution(
     cluster_obj: clusterlib.ClusterLib,
     name_template: str,
-    anchor_url: str,
-    anchor_data_hash: str,
-    constitution_url: str,
     constitution_hash: str,
-    pool_user: clusterlib.PoolUser,
-    constitution_script_hash: str = "",
+    pool_users: tp.List[clusterlib.PoolUser],
 ) -> tp.Tuple[clusterlib.ActionConstitution, str, int]:
     """Propose a constitution change."""
     deposit_amt = cluster_obj.conway_genesis["govActionDeposit"]
@@ -491,65 +487,73 @@ def propose_change_constitution(
         gov_state=cluster_obj.g_conway_governance.query.gov_state(),
     )
 
-    constitution_action = cluster_obj.g_conway_governance.action.create_constitution(
-        action_name=name_template,
-        deposit_amt=deposit_amt,
-        anchor_url=anchor_url,
-        anchor_data_hash=anchor_data_hash,
-        constitution_url=constitution_url,
-        constitution_hash=constitution_hash,
-        constitution_script_hash=constitution_script_hash,
-        prev_action_txid=prev_action_rec.txid,
-        prev_action_ix=prev_action_rec.ix,
-        deposit_return_stake_vkey_file=pool_user.stake.vkey_file,
-    )
+    constitution_actions = [
+        cluster_obj.g_conway_governance.action.create_constitution(
+            action_name=f"{name_template}_{i}",
+            deposit_amt=deposit_amt,
+            anchor_url=f"http://www.const-action-{i}.com",
+            anchor_data_hash=cluster_obj.g_conway_governance.get_anchor_data_hash(
+                text=f"http://www.const-action-{i}.com"),
+            constitution_url=f"http://www.const-new-{i}.com",
+            constitution_hash=constitution_hash,
+            prev_action_txid=prev_action_rec.txid,
+            prev_action_ix=prev_action_rec.ix,
+            deposit_return_stake_vkey_file=pool_users[i].stake.vkey_file,
+        )
+        for i in range(len(pool_users))
+    ]
 
     tx_files = clusterlib.TxFiles(
-        proposal_files=[constitution_action.action_file],
-        signing_key_files=[pool_user.payment.skey_file],
+        proposal_files=[
+            constitution_action.action_file for constitution_action in constitution_actions],
+        signing_key_files=[
+            pool_user.payment.skey_file for pool_user in pool_users],
     )
 
     # Make sure we have enough time to submit the proposal in one epoch
     clusterlib_utils.wait_for_epoch_interval(
         cluster_obj=cluster_obj, start=1, stop=common.EPOCH_STOP_SEC_BUFFER
     )
-
+    address_utxos = [cluster_obj.g_query.get_utxo(
+        pool_user.payment.address) for pool_user in pool_users]
+    flatenned_utxos = list(chain.from_iterable(address_utxos))
     tx_output = clusterlib_utils.build_and_submit_tx(
         cluster_obj=cluster_obj,
         name_template=f"{name_template}_constitution_action",
-        src_address=pool_user.payment.address,
+        src_address=pool_users[0].payment.address,
+        txins=flatenned_utxos,
         use_build_cmd=True,
         tx_files=tx_files,
-        fee_buffer=2_000_000,
     )
 
     out_utxos = cluster_obj.g_query.get_utxo(tx_raw_output=tx_output)
+    combined_deposit_amt = deposit_amt * len(constitution_actions)
     assert (
         clusterlib.filter_utxos(
-            utxos=out_utxos, address=pool_user.payment.address)[0].amount
-        == clusterlib.calculate_utxos_balance(tx_output.txins) - tx_output.fee - deposit_amt
-    ), f"Incorrect balance for source address `{pool_user.payment.address}`"
+            utxos=out_utxos, address=pool_users[0].payment.address)[0].amount
+        == clusterlib.calculate_utxos_balance(tx_output.txins) - tx_output.fee - combined_deposit_amt
+    ), f"Incorrect balance for source address `{pool_users[0].payment.address}`"
 
     action_txid = cluster_obj.g_transaction.get_txid(
         tx_body_file=tx_output.out_file)
     action_gov_state = cluster_obj.g_conway_governance.query.gov_state()
-    action_epoch = cluster_obj.g_query.get_epoch()
+    _cur_epoch = cluster_obj.g_query.get_epoch()
     save_gov_state(
         gov_state=action_gov_state,
-        name_template=f"{name_template}_constitution_action_{action_epoch}",
+        name_template=f"{name_template}_constitution_action_{_cur_epoch}",
     )
-    prop_action = governance_utils.lookup_proposal(
-        gov_state=action_gov_state, action_txid=action_txid
-    )
-    assert prop_action, "Create constitution action not found"
-    assert (
-        prop_action["proposalProcedure"]["govAction"]["tag"]
-        == governance_utils.ActionTags.NEW_CONSTITUTION.value
-    ), "Incorrect action tag"
-
-    action_ix = prop_action["actionId"]["govActionIx"]
-
-    return constitution_action, action_txid, action_ix
+    action_ixs = []
+    for acction_ix in range(len(constitution_actions)):
+        prop_action = governance_utils.lookup_proposal(
+            gov_state=action_gov_state, action_txid=action_txid, action_ix=acction_ix
+        )
+        assert prop_action, "Create constitution action not found"
+        assert (
+            prop_action["proposalProcedure"]["govAction"]["tag"]
+            == governance_utils.ActionTags.NEW_CONSTITUTION.value
+        ), "Incorrect action tag"
+        action_ixs.append(prop_action["actionId"]["govActionIx"])
+    return constitution_actions, action_txid, action_ixs
 
 
 def propose_pparams_update(
