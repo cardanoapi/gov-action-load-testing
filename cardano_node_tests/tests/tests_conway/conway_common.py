@@ -728,82 +728,89 @@ def propose_pparams_update(
     name_template: str,
     anchor_url: str,
     anchor_data_hash: str,
-    pool_user: clusterlib.PoolUser,
+    pool_users: tp.List[clusterlib.PoolUser],
     proposals: tp.List[clusterlib_utils.UpdateProposal],
     prev_action_rec: tp.Optional[governance_utils.PrevActionRec] = None,
+    num_pool_users: int =1
 ) -> PParamPropRec:
     """Propose a pparams update."""
     deposit_amt = cluster_obj.conway_genesis["govActionDeposit"]
-
+    selected_pool_users = pool_users[:num_pool_users]
+    total_participants = len(selected_pool_users)
     prev_action_rec = prev_action_rec or governance_utils.get_prev_action(
         action_type=governance_utils.PrevGovActionIds.PPARAM_UPDATE,
         gov_state=cluster_obj.g_conway_governance.query.gov_state(),
     )
 
-    update_args = clusterlib_utils.get_pparams_update_args(
-        update_proposals=proposals)
-    pparams_action = cluster_obj.g_conway_governance.action.create_pparams_update(
-        action_name=name_template,
-        deposit_amt=deposit_amt,
-        anchor_url=anchor_url,
-        anchor_data_hash=anchor_data_hash,
-        cli_args=update_args,
-        prev_action_txid=prev_action_rec.txid,
-        prev_action_ix=prev_action_rec.ix,
-        deposit_return_stake_vkey_file=pool_user.stake.vkey_file,
-    )
-
+    update_args = clusterlib_utils.get_pparams_update_args(update_proposals=proposals)
+    pparams_actions = [
+        cluster_obj.g_conway_governance.action.create_pparams_update(
+            action_name=f"{name_template}_{i}",
+            deposit_amt=deposit_amt,
+            anchor_url=anchor_url,
+            anchor_data_hash=anchor_data_hash,
+            cli_args=update_args,
+            prev_action_txid=prev_action_rec.txid,
+            prev_action_ix=prev_action_rec.ix,
+            deposit_return_stake_vkey_file=selected_pool_users[i].stake.vkey_file,
+        )
+        for i in range(total_participants)
+    ]
+    print(f"\n{len(pparams_actions)} proposals with {len(update_args)} args for protocol-params update action are being submitted in a single transaction")
     tx_files_action = clusterlib.TxFiles(
-        proposal_files=[pparams_action.action_file],
-        signing_key_files=[pool_user.payment.skey_file],
+        proposal_files=[pparams_action.action_file for pparams_action in pparams_actions],
+        signing_key_files=[pool_user.payment.skey_file for pool_user in selected_pool_users],
     )
 
     # Make sure we have enough time to submit the proposal in one epoch
     clusterlib_utils.wait_for_epoch_interval(
         cluster_obj=cluster_obj, start=1, stop=common.EPOCH_STOP_SEC_BUFFER
     )
-
+    address_utxos = [cluster_obj.g_query.get_utxo(pool_user.payment.address) for pool_user in selected_pool_users]
+    flatenned_utxos = list(chain.from_iterable(address_utxos))
     tx_output_action = clusterlib_utils.build_and_submit_tx(
         cluster_obj=cluster_obj,
         name_template=f"{name_template}_action",
-        src_address=pool_user.payment.address,
+        src_address=selected_pool_users[0].payment.address,
+        txins=flatenned_utxos,
         use_build_cmd=True,
         tx_files=tx_files_action,
     )
 
-    out_utxos_action = cluster_obj.g_query.get_utxo(
-        tx_raw_output=tx_output_action)
+    out_utxos_action = cluster_obj.g_query.get_utxo(tx_raw_output=tx_output_action)
+    combined_deposit_amt = deposit_amt * total_participants
     assert (
-        clusterlib.filter_utxos(utxos=out_utxos_action,
-                                address=pool_user.payment.address)[0].amount
+        clusterlib.filter_utxos(utxos=out_utxos_action, address=selected_pool_users[0].payment.address)[0].amount
         == clusterlib.calculate_utxos_balance(tx_output_action.txins)
         - tx_output_action.fee
-        - deposit_amt
-    ), f"Incorrect balance for source address `{pool_user.payment.address}`"
+        - combined_deposit_amt
+    ), f"Incorrect balance for source address `{selected_pool_users[0].payment.address}`"
 
-    action_txid = cluster_obj.g_transaction.get_txid(
-        tx_body_file=tx_output_action.out_file)
+    action_txid = cluster_obj.g_transaction.get_txid(tx_body_file=tx_output_action.out_file)
     action_gov_state = cluster_obj.g_conway_governance.query.gov_state()
-    action_epoch = cluster_obj.g_query.get_epoch()
-    save_gov_state(
-        gov_state=action_gov_state, name_template=f"{name_template}_action_{action_epoch}"
-    )
-    prop_action = governance_utils.lookup_proposal(
-        gov_state=action_gov_state, action_txid=action_txid
-    )
-    assert prop_action, "Param update action not found"
-    assert (
-        prop_action["proposalProcedure"]["govAction"]["tag"]
-        == governance_utils.ActionTags.PARAMETER_CHANGE.value
-    ), "Incorrect action tag"
+    _cur_epoch = cluster_obj.g_query.get_epoch()
+    save_gov_state(gov_state=action_gov_state, name_template=f"{name_template}_action_{_cur_epoch}")
+    
+    for action_ix in range(len(pparams_actions)):
+        prop_action = governance_utils.lookup_proposal(
+            gov_state=action_gov_state, action_txid=action_txid, action_ix=action_ix
+        )
+        assert prop_action, "Param update action not found"
+        assert (
+            prop_action["proposalProcedure"]["govAction"]["tag"]
+            == governance_utils.ActionTags.PARAMETER_CHANGE.value
+        ), "Incorrect action tag"
 
     action_ix = prop_action["actionId"]["govActionIx"]
     proposal_names = {p.name for p in proposals}
 
-    return PParamPropRec(
-        proposals=proposals,
-        action_txid=action_txid,
-        action_ix=action_ix,
-        proposal_names=proposal_names,
-        future_pparams=prop_action["proposalProcedure"]["govAction"]["contents"][1],
-    )
+    pparamPropRecs = []
+    for action_ix  in range(total_participants):
+        pparamPropRecs.append(PParamPropRec(
+            proposals=proposals,
+            action_txid=action_txid,
+            action_ix=action_ix,
+            proposal_names=proposal_names,
+            future_pparams=prop_action["proposalProcedure"]["govAction"]["contents"][1],
+        ))
+    return pparamPropRecs
