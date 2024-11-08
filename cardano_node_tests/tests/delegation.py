@@ -14,6 +14,7 @@ from cardano_node_tests.tests import common
 from cardano_node_tests.utils import cluster_nodes
 from cardano_node_tests.utils import clusterlib_utils
 from cardano_node_tests.utils import dbsync_types
+from cardano_node_tests.utils import configuration
 
 LOGGER = logging.getLogger(__name__)
 
@@ -57,8 +58,7 @@ def get_pool_id(
 
 def cluster_and_pool(
     cluster_manager: cluster_management.ClusterManager,
-    use_resources: resources_management.ResourcesType = (),
-) -> tp.Tuple[clusterlib.ClusterLib, str]:
+) -> tp.Tuple[clusterlib.ClusterLib, tp.List[str]]:
     """Return instance of `clusterlib.ClusterLib`, and pool id to delegate to.
 
     We need to mark the pool as "in use" when requesting local cluster
@@ -67,13 +67,13 @@ def cluster_and_pool(
     """
     cluster_type = cluster_nodes.get_cluster_type()
     if cluster_type.type == cluster_nodes.ClusterType.TESTNET:
-        cluster_obj: clusterlib.ClusterLib = cluster_manager.get(use_resources=use_resources)
+        cluster_obj: clusterlib.ClusterLib = cluster_manager.get()
 
-        # Getting ledger state on official testnet is too expensive,
+        # getting ledger state on official testnet is too expensive,
         # use one of hardcoded pool IDs if possible
-        if cluster_type.testnet_type == cluster_nodes.Testnets.preview:
+        if cluster_type.testnet_type == cluster_nodes.Testnets.testnet:  # type: ignore
             stake_pools = cluster_obj.g_query.get_stake_pools()
-            for pool_id in PREVIEW_POOL_IDS:
+            for pool_id in configuration.TESTNET_POOL_IDS:
                 if pool_id in stake_pools:
                     return cluster_obj, pool_id
 
@@ -82,7 +82,7 @@ def cluster_and_pool(
         pool_ids_s = sorted(blocks_before, key=blocks_before.get, reverse=True)  # type: ignore
         # select a pool with reasonable margin
         for pool_id in pool_ids_s:
-            pool_params = cluster_obj.g_query.get_pool_state(stake_pool_id=pool_id)
+            pool_params = clusterlib_utils.get_pool_state(cluster_obj=cluster_obj, pool_id=pool_id)
             if pool_params.pool_params["margin"] <= 0.5 and not pool_params.retiring:
                 break
         else:
@@ -91,18 +91,21 @@ def cluster_and_pool(
         cluster_obj = cluster_manager.get(
             use_resources=[
                 resources_management.OneOf(resources=cluster_management.Resources.ALL_POOLS),
-                *use_resources,
             ]
         )
-        pool_name = cluster_manager.get_used_resources(
+        pool_names = cluster_manager.get_used_resources(
             from_set=cluster_management.Resources.ALL_POOLS
-        )[0]
-        pool_id = get_pool_id(
+        )
+        all_pools = list(cluster_management.Resources.ALL_POOLS)
+        pool_ids = [
+            get_pool_id(
             cluster_obj=cluster_obj,
             addrs_data=cluster_manager.cache.addrs_data,
-            pool_name=pool_name,
-        )
-    return cluster_obj, pool_id
+            pool_name=all_pools[i],
+            )
+            for i in (range(len(all_pools)))
+        ]      
+    return cluster_obj, pool_ids
 
 
 def db_check_delegation(
