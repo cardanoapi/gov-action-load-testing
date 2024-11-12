@@ -205,6 +205,7 @@ class TestHardfork:
                     pool_user=pool_users_lg[0],
                     vote=action["vote"],
                     vote_cc=True,
+                    vote_drep=True,
                     vote_spo=True,
                 )
 
@@ -390,7 +391,7 @@ class TestHardfork:
                     == governance_utils.ActionTags.HARDFORK_INIT.value
                 ), "Incorrect action tag"
 
-            # Check that DReps cannot vote
+            # Cannot vote during bootstrap phase
             for action_ix in range(actions_num):
                 with pytest.raises(clusterlib.CLIError) as excinfo:
                     conway_common._cast_vote(
@@ -431,6 +432,7 @@ class TestHardfork:
                     pool_user=pool_users_lg[0],
                     vote=action["vote"],
                     vote_cc=True,
+                    vote_drep=True,
                     vote_spo=True,
                 )
 
@@ -614,7 +616,7 @@ class TestHardfork:
                     == governance_utils.ActionTags.HARDFORK_INIT.value
                 ), "Incorrect action tag"
 
-            # Check that DReps cannot vote
+            # cannot vote durong bootstrap period
             for action_ix in range(actions_num):
                 with pytest.raises(clusterlib.CLIError) as excinfo:
                     conway_common._cast_vote(
@@ -653,6 +655,7 @@ class TestHardfork:
                     pool_user=pool_users_lg[0],
                     vote=action["vote"],
                     vote_cc=True,
+                    vote_drep=True,
                     vote_spo=True,
                 )
 

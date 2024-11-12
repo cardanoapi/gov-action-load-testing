@@ -273,6 +273,7 @@ class Votes(Enum):
     EQUAL = "equal"
     INSUFFICIENT = "insufficient"
 
+
 def _cast_vote(
     temp_template: str,
     action_ix: int,
@@ -404,19 +405,19 @@ def submit_vote_(
     keys: tp.List[clusterlib.FileType],
     submit_method: str = "",
     use_build_cmd: bool = False,
-)-> tp.List[clusterlib.TxRawOutput]:
+) -> tp.List[clusterlib.TxRawOutput]:
     """Submit a Tx with votes in chunks of 60."""
-    
+
     def divide_list_into_sublists(m_list, n):
-        if n==0 or m_list==[]: 
+        if n == 0 or m_list == []:
             return [m_list]
         result = [m_list[i:i + n] for i in range(0, len(m_list), n)]
         return result
-    
-    total_keys= len(keys)
-    vote_chunks= divide_list_into_sublists(votes, total_keys)
-    tx_outputs=[]
-    for vote_chunk in vote_chunks: 
+
+    total_keys = len(keys)
+    vote_chunks = divide_list_into_sublists(votes, 60)
+    tx_outputs = []
+    for vote_chunk in vote_chunks:
         tx_outputs.append(
             submit_vote
             (
@@ -429,9 +430,8 @@ def submit_vote_(
                 use_build_cmd
             )
         )
-    
-    return [*tx_outputs]
 
+    return [*tx_outputs]
 
 
 def cast_vote(
@@ -731,7 +731,7 @@ def propose_pparams_update(
     pool_users: tp.List[clusterlib.PoolUser],
     proposals: tp.List[clusterlib_utils.UpdateProposal],
     prev_action_rec: tp.Optional[governance_utils.PrevActionRec] = None,
-    num_pool_users: int =1
+    num_pool_users: int = 1
 ) -> PParamPropRec:
     """Propose a pparams update."""
     deposit_amt = cluster_obj.conway_genesis["govActionDeposit"]
@@ -742,7 +742,8 @@ def propose_pparams_update(
         gov_state=cluster_obj.g_conway_governance.query.gov_state(),
     )
 
-    update_args = clusterlib_utils.get_pparams_update_args(update_proposals=proposals)
+    update_args = clusterlib_utils.get_pparams_update_args(
+        update_proposals=proposals)
     pparams_actions = [
         cluster_obj.g_conway_governance.action.create_pparams_update(
             action_name=f"{name_template}_{i}",
@@ -758,15 +759,18 @@ def propose_pparams_update(
     ]
     print(f"\n{len(pparams_actions)} proposals with {len(update_args)} args for protocol-params update action are being submitted in a single transaction")
     tx_files_action = clusterlib.TxFiles(
-        proposal_files=[pparams_action.action_file for pparams_action in pparams_actions],
-        signing_key_files=[pool_user.payment.skey_file for pool_user in selected_pool_users],
+        proposal_files=[
+            pparams_action.action_file for pparams_action in pparams_actions],
+        signing_key_files=[
+            pool_user.payment.skey_file for pool_user in selected_pool_users],
     )
 
     # Make sure we have enough time to submit the proposal in one epoch
     clusterlib_utils.wait_for_epoch_interval(
         cluster_obj=cluster_obj, start=1, stop=common.EPOCH_STOP_SEC_BUFFER
     )
-    address_utxos = [cluster_obj.g_query.get_utxo(pool_user.payment.address) for pool_user in selected_pool_users]
+    address_utxos = [cluster_obj.g_query.get_utxo(
+        pool_user.payment.address) for pool_user in selected_pool_users]
     flatenned_utxos = list(chain.from_iterable(address_utxos))
     tx_output_action = clusterlib_utils.build_and_submit_tx(
         cluster_obj=cluster_obj,
@@ -777,20 +781,24 @@ def propose_pparams_update(
         tx_files=tx_files_action,
     )
 
-    out_utxos_action = cluster_obj.g_query.get_utxo(tx_raw_output=tx_output_action)
+    out_utxos_action = cluster_obj.g_query.get_utxo(
+        tx_raw_output=tx_output_action)
     combined_deposit_amt = deposit_amt * total_participants
     assert (
-        clusterlib.filter_utxos(utxos=out_utxos_action, address=selected_pool_users[0].payment.address)[0].amount
+        clusterlib.filter_utxos(
+            utxos=out_utxos_action, address=selected_pool_users[0].payment.address)[0].amount
         == clusterlib.calculate_utxos_balance(tx_output_action.txins)
         - tx_output_action.fee
         - combined_deposit_amt
     ), f"Incorrect balance for source address `{selected_pool_users[0].payment.address}`"
 
-    action_txid = cluster_obj.g_transaction.get_txid(tx_body_file=tx_output_action.out_file)
+    action_txid = cluster_obj.g_transaction.get_txid(
+        tx_body_file=tx_output_action.out_file)
     action_gov_state = cluster_obj.g_conway_governance.query.gov_state()
     _cur_epoch = cluster_obj.g_query.get_epoch()
-    save_gov_state(gov_state=action_gov_state, name_template=f"{name_template}_action_{_cur_epoch}")
-    
+    save_gov_state(gov_state=action_gov_state,
+                   name_template=f"{name_template}_action_{_cur_epoch}")
+
     for action_ix in range(len(pparams_actions)):
         prop_action = governance_utils.lookup_proposal(
             gov_state=action_gov_state, action_txid=action_txid, action_ix=action_ix
@@ -805,7 +813,7 @@ def propose_pparams_update(
     proposal_names = {p.name for p in proposals}
 
     pparamPropRecs = []
-    for action_ix  in range(total_participants):
+    for action_ix in range(total_participants):
         pparamPropRecs.append(PParamPropRec(
             proposals=proposals,
             action_txid=action_txid,
