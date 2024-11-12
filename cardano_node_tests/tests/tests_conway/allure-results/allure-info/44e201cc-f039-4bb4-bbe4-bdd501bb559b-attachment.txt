@@ -1,0 +1,7 @@
+
+Submitting 3 info action proposals in a single transaction
+3 SPOs are voting
+90 CC members are voting
+100 DReps are voting
+submitting 270 CC votes
+Fails at submitting 3 proposals for info action in a single transaction

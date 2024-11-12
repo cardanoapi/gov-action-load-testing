@@ -1,0 +1,5 @@
+
+ Submitting 3 treasury withdrawl actions in a single transaction.
+100  DReps are voting
+90  CC Members are voting
+Fails at submitting 3 proposals for treasury withdrawl in a single transaction

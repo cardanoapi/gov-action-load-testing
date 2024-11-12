@@ -1,0 +1,1 @@
+Fails at submitting 3 no-confidence actions in a single transaction

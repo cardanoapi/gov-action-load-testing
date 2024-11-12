@@ -1,0 +1,3 @@
+
+3 proposals for update constitution action are being submitted in a single transaction
+Fails at proposing 3 constitution update actions in a single transaction
