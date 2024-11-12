@@ -168,6 +168,20 @@ allure.api.addTranslation('pl', {
     }
 });
 
+allure.api.addTranslation('am', {
+    tab: {
+        behaviors: {
+            name: 'Վարքագծեր'
+        }
+    },
+    widget: {
+        behaviors: {
+            name: 'Ֆիչրները ըստ պատմությունների',
+            showAll: 'ցույց տալ բոլորը'
+        }
+    }
+});
+
 allure.api.addTranslation('az', {
     tab: {
         behaviors: {
@@ -206,6 +220,34 @@ allure.api.addTranslation('isv', {
         behaviors: {
             name: 'Funkcionalnost',
             showAll: 'pokaži vsěčto',
+        }
+    }
+});
+
+allure.api.addTranslation('ka', {
+    tab: {
+        behaviors: {
+            name: 'ფუნქციონალი',
+        }
+    },
+    widget: {
+        behaviors: {
+            name: 'ფუნქციონალი',
+            showAll: 'ყველას ჩვენება',
+        }
+    }
+});
+
+allure.api.addTranslation('it', {
+    tab: {
+        behaviors: {
+            name: 'Comportamenti'
+        }
+    },
+    widget: {
+        behaviors: {
+            name: 'Funzionalità per storie',
+            showAll: 'Mostra tutto'
         }
     }
 });
