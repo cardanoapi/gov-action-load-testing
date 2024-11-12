@@ -1,0 +1,9 @@
+allure generate --clean \
+    cardano_node_tests/tests/tests_conway/allure-results/allure-constitution/ \
+    cardano_node_tests/tests/tests_conway/allure-results/allure-committee/ \
+    cardano_node_tests/tests/tests_conway/allure-results/allure-drep/ \
+    cardano_node_tests/tests/tests_conway/allure-results/allure-hardfork/ \
+    cardano_node_tests/tests/tests_conway/allure-results/allure-info/ \
+    cardano_node_tests/tests/tests_conway/allure-results/allure-no-confidence/ \
+    cardano_node_tests/tests/tests_conway/allure-results/allure-pparam-update/ \
+    cardano_node_tests/tests/tests_conway/allure-results/allure-treasury-withdrawal/
