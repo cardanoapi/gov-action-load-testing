@@ -8,6 +8,7 @@ run_workdir/
 dev_workdir/
 
 chain-state/
+.cluster-address/
 
 # Status files of cluster instances
 /state-cluster*/
